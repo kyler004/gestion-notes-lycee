@@ -8,6 +8,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DbClient } from '../db/client.js';
+import { PaginationQuerySchema } from '../lib/sql.js';
 import {
   createEnrollment,
   createStudent,
@@ -25,13 +26,17 @@ const ClassIdParamSchema = z.object({
   classId: z.string().uuid(),
 });
 
-const StudentsQuerySchema = z.object({
-  q: z.string().optional(),
-});
+const StudentsQuerySchema = z
+  .object({
+    q: z.string().trim().max(100).optional(),
+  })
+  .merge(PaginationQuerySchema);
 
-const ClassStudentsQuerySchema = z.object({
-  status: z.enum(ENROLLMENT_STATUSES).optional(),
-});
+const ClassStudentsQuerySchema = z
+  .object({
+    status: z.enum(ENROLLMENT_STATUSES).optional(),
+  })
+  .merge(PaginationQuerySchema);
 
 export async function registerStudentsRoutes(
   app: FastifyInstance,
@@ -43,8 +48,8 @@ export async function registerStudentsRoutes(
     '/api/students',
     { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])] },
     async (request) => {
-      const { q } = StudentsQuerySchema.parse(request.query);
-      const students = await listStudents(db, q);
+      const { q, limit, offset } = StudentsQuerySchema.parse(request.query);
+      const students = await listStudents(db, q, { limit, offset });
       return { students };
     },
   );
@@ -94,8 +99,11 @@ export async function registerStudentsRoutes(
     { preHandler: [app.authenticate] },
     async (request) => {
       const { classId } = ClassIdParamSchema.parse(request.params);
-      const { status } = ClassStudentsQuerySchema.parse(request.query);
-      const students = await listClassStudents(db, classId, request.currentUser, status);
+      const { status, limit, offset } = ClassStudentsQuerySchema.parse(request.query);
+      const students = await listClassStudents(db, classId, request.currentUser, status, {
+        limit,
+        offset,
+      });
       return { classId, students };
     },
   );

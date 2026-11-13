@@ -11,8 +11,21 @@ import type {
 } from '../types/grading.js';
 
 export function roundGrade(value: number, decimals = 2): number {
-  const factor = 10 ** decimals;
-  const rounded = Math.round((value + Number.EPSILON) * factor) / factor;
+  if (!Number.isFinite(value)) {
+    throw new RangeError(`Valeur numérique invalide pour roundGrade : ${value}`);
+  }
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 10) {
+    throw new RangeError(`Nombre de décimales invalide : ${decimals}`);
+  }
+  const sign = value < 0 ? -1 : 1;
+  const abs = Math.abs(value);
+  const [mantissa, expStr] = abs.toString().split('e');
+  const baseExp = expStr ? Number(expStr) : 0;
+  const shifted = Number(`${mantissa}e${baseExp + decimals}`);
+  const roundedInt = Math.round(shifted);
+  const [rMantissa, rExpStr] = roundedInt.toString().split('e');
+  const rExp = rExpStr ? Number(rExpStr) : 0;
+  const rounded = sign * Number(`${rMantissa}e${rExp - decimals}`);
   return rounded === 0 ? 0 : rounded;
 }
 
@@ -70,8 +83,13 @@ function evaluateSequenceEntry(
     };
   }
 
-  const normalizedScore =
-    grade.status === 'present' && grade.score !== null && Number.isFinite(grade.score) ? grade.score : null;
+  let normalizedScore: number | null = null;
+  if (grade.status === 'present') {
+    if (grade.score === null || !Number.isFinite(grade.score) || grade.score < 0 || grade.score > 20) {
+      throw new RangeError(`Note invalide hors bornes [0, 20] : ${grade.score}`);
+    }
+    normalizedScore = grade.score;
+  }
 
   const detail: SequenceGradeDetail = {
     periodId: seq.id,
@@ -155,6 +173,14 @@ interface WeightedTrimesterDescriptor {
 }
 
 export function computeClassResults(input: ClassPeriodComputationInput): ClassPeriodComputedReport {
+  for (const subject of input.subjects) {
+    if (!Number.isFinite(subject.coefficient) || subject.coefficient <= 0) {
+      throw new RangeError(
+        `Coefficient invalide pour la matière "${subject.subjectCode}" : ${subject.coefficient}`,
+      );
+    }
+  }
+
   const gradeLookup = buildGradeLookup(input.grades);
 
   let sequenceTarget: WeightedSequenceDescriptor | null = null;

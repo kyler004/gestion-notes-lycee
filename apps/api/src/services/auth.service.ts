@@ -7,18 +7,33 @@ import {
   type AuthUserPayload,
   type UserRole,
 } from '@lycee/shared';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import type { AppConfig } from '../config/env.js';
 import type { DbClient } from '../db/client.js';
 import { refreshTokens, users } from '../db/schema.js';
-import { generateOpaqueToken, hashPassword, hashToken, verifyPassword } from '../lib/crypto.js';
-import { ForbiddenError, NotFoundError, UnauthorizedError } from '../lib/errors.js';
+import {
+  generateOpaqueToken,
+  hashPassword,
+  hashToken,
+  needsPasswordRehash,
+  verifyPassword,
+} from '../lib/crypto.js';
+import { NotFoundError, UnauthorizedError } from '../lib/errors.js';
+
+const MAX_ACTIVE_SESSIONS_PER_USER = 10;
+const REVOKED_TOKEN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+let dummyHashPromise: Promise<string> | null = null;
+function getDummyPasswordHash(): Promise<string> {
+  if (!dummyHashPromise) {
+    dummyHashPromise = hashPassword('__lycee_dummy_timing_protection_password_2026__');
+  }
+  return dummyHashPromise;
+}
 
 export interface AccessTokenJwtPayload {
   sub: string;
-  username: string;
-  fullName: string;
-  role: UserRole;
+  ver: number;
 }
 
 export type SignAccessTokenFn = (payload: AccessTokenJwtPayload) => string | Promise<string>;
@@ -47,6 +62,12 @@ function toAuthUserPayload(user: {
 
 export function createAuthService(db: DbClient, config: AppConfig) {
   const refreshTtlMs = config.JWT_REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000;
+  const maxSessionMs =
+    Math.max(config.JWT_REFRESH_TTL_DAYS, config.JWT_REFRESH_MAX_SESSION_DAYS) *
+    24 *
+    60 *
+    60 *
+    1000;
 
   async function login(input: unknown, signAccessToken: SignAccessTokenFn): Promise<AuthSessionResult> {
     const data = LoginSchema.parse(input);
@@ -59,42 +80,99 @@ export function createAuthService(db: DbClient, config: AppConfig) {
         role: users.role,
         passwordHash: users.passwordHash,
         isActive: users.isActive,
+        tokenVersion: users.tokenVersion,
       })
       .from(users)
       .where(eq(users.username, data.username))
       .limit(1);
 
-    if (!user) {
+    const targetHash = user ? user.passwordHash : await getDummyPasswordHash();
+    const passwordValid = await verifyPassword(data.password, targetHash);
+
+    if (!user || !passwordValid || !user.isActive) {
       throw new UnauthorizedError('Identifiants invalides.');
     }
 
-    const passwordValid = await verifyPassword(data.password, user.passwordHash);
-    if (!passwordValid) {
-      throw new UnauthorizedError('Identifiants invalides.');
-    }
-
-    if (!user.isActive) {
-      throw new ForbiddenError('Compte utilisateur désactivé.');
-    }
+    const upgradedHash = needsPasswordRehash(user.passwordHash)
+      ? await hashPassword(data.password)
+      : null;
 
     const refreshToken = generateOpaqueToken();
     const tokenHash = hashToken(refreshToken);
     const familyId = randomUUID();
-    const expiresAt = new Date(Date.now() + refreshTtlMs);
+    const now = new Date();
+    const nowMs = now.getTime();
+    const sessionExpiresAt = new Date(nowMs + maxSessionMs);
+    const expiresAt = new Date(Math.min(nowMs + refreshTtlMs, sessionExpiresAt.getTime()));
+    const revokedCutoff = new Date(nowMs - REVOKED_TOKEN_RETENTION_MS);
 
-    await db.insert(refreshTokens).values({
-      userId: user.id,
-      familyId,
-      tokenHash,
-      deviceLabel: data.deviceLabel ?? null,
-      expiresAt,
+    await db.transaction(async (tx) => {
+      if (upgradedHash) {
+        await tx
+          .update(users)
+          .set({ passwordHash: upgradedHash, updatedAt: now })
+          .where(eq(users.id, user.id));
+      }
+
+      // Purger les jetons expirés ou révoqués depuis plus de 30 jours
+      await tx
+        .delete(refreshTokens)
+        .where(
+          and(
+            eq(refreshTokens.userId, user.id),
+            or(
+              lte(refreshTokens.expiresAt, now),
+              lte(refreshTokens.sessionExpiresAt, now),
+              and(isNotNull(refreshTokens.revokedAt), lte(refreshTokens.revokedAt, revokedCutoff)),
+            ),
+          ),
+        );
+
+      // Plafonner à MAX_ACTIVE_SESSIONS_PER_USER sessions (familles) actives simultanées
+      const activeFamilyRows = await tx
+        .select({
+          familyId: refreshTokens.familyId,
+          createdAt: refreshTokens.createdAt,
+        })
+        .from(refreshTokens)
+        .where(
+          and(
+            eq(refreshTokens.userId, user.id),
+            isNull(refreshTokens.revokedAt),
+            gt(refreshTokens.expiresAt, now),
+            gt(refreshTokens.sessionExpiresAt, now),
+          ),
+        )
+        .orderBy(desc(refreshTokens.createdAt));
+
+      const uniqueFamiliesInOrder: string[] = [];
+      for (const row of activeFamilyRows) {
+        if (!uniqueFamiliesInOrder.includes(row.familyId)) {
+          uniqueFamiliesInOrder.push(row.familyId);
+        }
+      }
+
+      const overflowFamilies = uniqueFamiliesInOrder.slice(MAX_ACTIVE_SESSIONS_PER_USER - 1);
+      for (const oldFamilyId of overflowFamilies) {
+        await tx
+          .update(refreshTokens)
+          .set({ revokedAt: now })
+          .where(and(eq(refreshTokens.familyId, oldFamilyId), isNull(refreshTokens.revokedAt)));
+      }
+
+      await tx.insert(refreshTokens).values({
+        userId: user.id,
+        familyId,
+        tokenHash,
+        deviceLabel: data.deviceLabel ?? null,
+        expiresAt,
+        sessionExpiresAt,
+      });
     });
 
     const accessToken = await signAccessToken({
       sub: user.id,
-      username: user.username,
-      fullName: user.fullName,
-      role: user.role,
+      ver: user.tokenVersion,
     });
 
     return {
@@ -127,7 +205,10 @@ export function createAuthService(db: DbClient, config: AppConfig) {
     }
 
     const now = new Date();
-    if (existingToken.expiresAt.getTime() <= now.getTime()) {
+    if (
+      existingToken.expiresAt.getTime() <= now.getTime() ||
+      existingToken.sessionExpiresAt.getTime() <= now.getTime()
+    ) {
       throw new UnauthorizedError('Jeton de rafraîchissement expiré.');
     }
 
@@ -138,6 +219,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
         fullName: users.fullName,
         role: users.role,
         isActive: users.isActive,
+        tokenVersion: users.tokenVersion,
       })
       .from(users)
       .where(eq(users.id, existingToken.userId))
@@ -150,7 +232,9 @@ export function createAuthService(db: DbClient, config: AppConfig) {
     const newRefreshToken = generateOpaqueToken();
     const newTokenHash = hashToken(newRefreshToken);
     const newTokenId = randomUUID();
-    const newExpiresAt = new Date(now.getTime() + refreshTtlMs);
+    const newExpiresAt = new Date(
+      Math.min(now.getTime() + refreshTtlMs, existingToken.sessionExpiresAt.getTime()),
+    );
 
     const rotated = await db.transaction(async (tx) => {
       const [revokedOld] = await tx
@@ -173,6 +257,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
         tokenHash: newTokenHash,
         deviceLabel: existingToken.deviceLabel,
         expiresAt: newExpiresAt,
+        sessionExpiresAt: existingToken.sessionExpiresAt,
       });
 
       return true;
@@ -188,9 +273,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
 
     const accessToken = await signAccessToken({
       sub: user.id,
-      username: user.username,
-      fullName: user.fullName,
-      role: user.role,
+      ver: user.tokenVersion,
     });
 
     return {
@@ -203,11 +286,41 @@ export function createAuthService(db: DbClient, config: AppConfig) {
   async function logout(input: unknown): Promise<{ success: true }> {
     const data = LogoutSchema.parse(input);
     const tokenHash = hashToken(data.refreshToken);
+    const now = new Date();
 
-    await db
-      .update(refreshTokens)
-      .set({ revokedAt: new Date() })
-      .where(and(eq(refreshTokens.tokenHash, tokenHash), isNull(refreshTokens.revokedAt)));
+    const [tokenRow] = await db
+      .select({ familyId: refreshTokens.familyId })
+      .from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, tokenHash))
+      .limit(1);
+
+    if (tokenRow) {
+      await db
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokens.familyId, tokenRow.familyId), isNull(refreshTokens.revokedAt)));
+    }
+
+    return { success: true };
+  }
+
+  async function logoutAll(userId: string): Promise<{ success: true }> {
+    const now = new Date();
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({
+          tokenVersion: sql`${users.tokenVersion} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(users.id, userId));
+
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+    });
 
     return { success: true };
   }
@@ -241,6 +354,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
         .update(users)
         .set({
           passwordHash: newPasswordHash,
+          tokenVersion: sql`${users.tokenVersion} + 1`,
           updatedAt: now,
         })
         .where(eq(users.id, userId));
@@ -258,6 +372,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
     login,
     refresh,
     logout,
+    logoutAll,
     changePassword,
   };
 }

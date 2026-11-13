@@ -3,23 +3,28 @@ import type { AuthUserPayload, UserRole } from '@lycee/shared';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { z } from 'zod';
 import type { DbClient } from '../db/client.js';
 import { users } from '../db/schema.js';
 import { ForbiddenError, UnauthorizedError } from '../lib/errors.js';
+
+export const JWT_ISSUER = 'lycee-api';
+export const JWT_AUDIENCE = 'lycee-client';
+
+const JwtClaimsSchema = z.object({
+  sub: z.string().uuid(),
+  ver: z.number().int().positive(),
+});
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
     payload: {
       sub: string;
-      username: string;
-      fullName: string;
-      role: UserRole;
+      ver: number;
     };
     user: {
       sub: string;
-      username: string;
-      fullName: string;
-      role: UserRole;
+      ver: number;
     };
   }
 }
@@ -43,7 +48,18 @@ export interface AuthPluginOptions {
 export const authPlugin = fp<AuthPluginOptions>(async (app: FastifyInstance, opts) => {
   await app.register(fastifyJwt, {
     secret: opts.jwtAccessSecret,
-    sign: { expiresIn: opts.jwtAccessTtl },
+    sign: {
+      algorithm: 'HS256',
+      iss: JWT_ISSUER,
+      aud: JWT_AUDIENCE,
+      expiresIn: opts.jwtAccessTtl,
+    },
+    verify: {
+      algorithms: ['HS256'],
+      allowedIss: JWT_ISSUER,
+      allowedAud: JWT_AUDIENCE,
+      requiredClaims: ['sub', 'exp', 'iat', 'ver'],
+    },
   });
 
   app.decorateRequest('currentUser', undefined as unknown as AuthUserPayload);
@@ -55,6 +71,11 @@ export const authPlugin = fp<AuthPluginOptions>(async (app: FastifyInstance, opt
       throw new UnauthorizedError('Jeton d’authentification invalide ou expiré.');
     }
 
+    const parsedClaims = JwtClaimsSchema.safeParse(request.user);
+    if (!parsedClaims.success) {
+      throw new UnauthorizedError('Jeton d’authentification invalide.');
+    }
+
     const [dbUser] = await opts.db
       .select({
         id: users.id,
@@ -62,16 +83,23 @@ export const authPlugin = fp<AuthPluginOptions>(async (app: FastifyInstance, opt
         fullName: users.fullName,
         role: users.role,
         isActive: users.isActive,
+        tokenVersion: users.tokenVersion,
       })
       .from(users)
-      .where(eq(users.id, request.user.sub))
+      .where(eq(users.id, parsedClaims.data.sub))
       .limit(1);
 
-    if (!dbUser || !dbUser.isActive) {
-      throw new UnauthorizedError('Compte utilisateur inactif ou introuvable.');
+    if (!dbUser || !dbUser.isActive || dbUser.tokenVersion !== parsedClaims.data.ver) {
+      throw new UnauthorizedError('Compte utilisateur inactif, session révoquée ou introuvable.');
     }
 
-    request.currentUser = dbUser;
+    request.currentUser = {
+      id: dbUser.id,
+      username: dbUser.username,
+      fullName: dbUser.fullName,
+      role: dbUser.role,
+      isActive: dbUser.isActive,
+    };
   });
 
   app.decorate('requireRoles', (roles: readonly UserRole[]) => {

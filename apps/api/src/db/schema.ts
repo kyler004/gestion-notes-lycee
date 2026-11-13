@@ -10,17 +10,21 @@ import type {
   SyncOutcome,
   UserRole,
 } from '@lycee/shared';
+import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  check,
   customType,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
   numeric,
   pgSequence,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -41,21 +45,25 @@ const bytea = customType<{ data: Buffer; driverData: Buffer | Uint8Array }>({
 
 export const syncSeq = pgSequence('sync_seq', { startWith: 1 });
 
-export const schoolProfile = pgTable('school_profile', {
-  id: integer('id').primaryKey().default(1),
-  name: text('name').notNull(),
-  motto: text('motto').notNull().default(''),
-  country: text('country').notNull().default('République du Cameroun'),
-  ministry: text('ministry').notNull().default('Ministère des Enseignements Secondaires'),
-  region: text('region').notNull().default(''),
-  delegation: text('delegation').notNull().default(''),
-  city: text('city').notNull().default(''),
-  phone: text('phone').notNull().default(''),
-  email: text('email').notNull().default(''),
-  logoData: bytea('logo_data'),
-  logoMimeType: text('logo_mime_type'),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const schoolProfile = pgTable(
+  'school_profile',
+  {
+    id: integer('id').primaryKey().default(1),
+    name: text('name').notNull(),
+    motto: text('motto').notNull().default(''),
+    country: text('country').notNull().default('République du Cameroun'),
+    ministry: text('ministry').notNull().default('Ministère des Enseignements Secondaires'),
+    region: text('region').notNull().default(''),
+    delegation: text('delegation').notNull().default(''),
+    city: text('city').notNull().default(''),
+    phone: text('phone').notNull().default(''),
+    email: text('email').notNull().default(''),
+    logoData: bytea('logo_data'),
+    logoMimeType: text('logo_mime_type'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [check('school_profile_singleton_chk', sql`${t.id} = 1`)],
+);
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -64,6 +72,7 @@ export const users = pgTable('users', {
   fullName: text('full_name').notNull(),
   role: text('role').$type<UserRole>().notNull(),
   passwordHash: text('password_hash').notNull(),
+  tokenVersion: integer('token_version').notNull().default(1),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -80,6 +89,7 @@ export const refreshTokens = pgTable(
     tokenHash: text('token_hash').notNull().unique(),
     deviceLabel: text('device_label'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    sessionExpiresAt: timestamp('session_expires_at', { withTimezone: true }).defaultNow().notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     replacedById: uuid('replaced_by_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -87,23 +97,27 @@ export const refreshTokens = pgTable(
   (t) => [index('refresh_tokens_user_idx').on(t.userId), index('refresh_tokens_family_idx').on(t.familyId)],
 );
 
-export const academicYears = pgTable('academic_years', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  label: text('label').notNull().unique(),
-  startDate: date('start_date').notNull(),
-  endDate: date('end_date').notNull(),
-  isActive: boolean('is_active').notNull().default(false),
-  syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const academicYears = pgTable(
+  'academic_years',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    label: text('label').notNull().unique(),
+    startDate: date('start_date').notNull(),
+    endDate: date('end_date').notNull(),
+    isActive: boolean('is_active').notNull().default(false),
+    syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [check('academic_years_dates_chk', sql`${t.endDate} > ${t.startDate}`)],
+);
 
 export const gradingRules = pgTable('grading_rules', {
   id: uuid('id').defaultRandom().primaryKey(),
   academicYearId: uuid('academic_year_id')
     .notNull()
     .unique()
-    .references(() => academicYears.id, { onDelete: 'cascade' }),
+    .references(() => academicYears.id, { onDelete: 'restrict' }),
   trimestersCount: integer('trimesters_count').notNull().default(3),
   sequencesPerTrimester: integer('sequences_per_trimester').notNull().default(2),
   sequenceWeights: jsonb('sequence_weights').$type<number[]>().notNull(),
@@ -124,7 +138,7 @@ export const periods = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     academicYearId: uuid('academic_year_id')
       .notNull()
-      .references(() => academicYears.id, { onDelete: 'cascade' }),
+      .references(() => academicYears.id, { onDelete: 'restrict' }),
     parentPeriodId: uuid('parent_period_id'),
     type: text('type').$type<PeriodType>().notNull(),
     code: text('code').notNull(),
@@ -133,11 +147,22 @@ export const periods = pgTable(
     weight: numeric('weight', { precision: 5, scale: 2 }).notNull().default('1.00'),
     status: text('status').$type<PeriodStatus>().notNull().default('open'),
     lockedAt: timestamp('locked_at', { withTimezone: true }),
-    lockedBy: uuid('locked_by').references(() => users.id),
+    lockedBy: uuid('locked_by').references(() => users.id, { onDelete: 'restrict' }),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [uniqueIndex('periods_year_code_uidx').on(t.academicYearId, t.code)],
+  (t) => [
+    uniqueIndex('periods_year_code_uidx').on(t.academicYearId, t.code),
+    foreignKey({
+      columns: [t.parentPeriodId],
+      foreignColumns: [t.id],
+      name: 'periods_parent_period_id_periods_id_fk',
+    }).onDelete('restrict'),
+    check('periods_weight_pos_chk', sql`${t.weight} > 0`),
+    check('periods_not_self_parent_chk', sql`${t.parentPeriodId} IS NULL OR ${t.parentPeriodId} <> ${t.id}`),
+    check('periods_type_chk', sql`${t.type} IN ('trimester', 'sequence')`),
+    check('periods_status_chk', sql`${t.status} IN ('open', 'locked')`),
+  ],
 );
 
 export const periodAuditLogs = pgTable(
@@ -146,11 +171,11 @@ export const periodAuditLogs = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     periodId: uuid('period_id')
       .notNull()
-      .references(() => periods.id, { onDelete: 'cascade' }),
+      .references(() => periods.id, { onDelete: 'restrict' }),
     action: text('action').$type<'locked' | 'unlocked'>().notNull(),
     actorId: uuid('actor_id')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'restrict' }),
     reason: text('reason').notNull().default(''),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -163,11 +188,11 @@ export const classes = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     academicYearId: uuid('academic_year_id')
       .notNull()
-      .references(() => academicYears.id, { onDelete: 'cascade' }),
+      .references(() => academicYears.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
     level: text('level').notNull(),
     series: text('series'),
-    mainTeacherId: uuid('main_teacher_id').references(() => users.id),
+    mainTeacherId: uuid('main_teacher_id').references(() => users.id, { onDelete: 'restrict' }),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -193,13 +218,13 @@ export const enrollments = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     studentId: uuid('student_id')
       .notNull()
-      .references(() => students.id, { onDelete: 'cascade' }),
+      .references(() => students.id, { onDelete: 'restrict' }),
     classId: uuid('class_id')
       .notNull()
-      .references(() => classes.id, { onDelete: 'cascade' }),
+      .references(() => classes.id, { onDelete: 'restrict' }),
     academicYearId: uuid('academic_year_id')
       .notNull()
-      .references(() => academicYears.id, { onDelete: 'cascade' }),
+      .references(() => academicYears.id, { onDelete: 'restrict' }),
     isRepeater: boolean('is_repeater').notNull().default(false),
     status: text('status').$type<EnrollmentStatus>().notNull().default('active'),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
@@ -218,7 +243,7 @@ export const subjectGroups = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     academicYearId: uuid('academic_year_id')
       .notNull()
-      .references(() => academicYears.id, { onDelete: 'cascade' }),
+      .references(() => academicYears.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
     orderIndex: integer('order_index').notNull(),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
@@ -242,16 +267,19 @@ export const classSubjects = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     classId: uuid('class_id')
       .notNull()
-      .references(() => classes.id, { onDelete: 'cascade' }),
+      .references(() => classes.id, { onDelete: 'restrict' }),
     subjectId: uuid('subject_id')
       .notNull()
-      .references(() => subjects.id, { onDelete: 'cascade' }),
-    subjectGroupId: uuid('subject_group_id').references(() => subjectGroups.id, { onDelete: 'set null' }),
+      .references(() => subjects.id, { onDelete: 'restrict' }),
+    subjectGroupId: uuid('subject_group_id').references(() => subjectGroups.id, { onDelete: 'restrict' }),
     coefficient: numeric('coefficient', { precision: 4, scale: 2 }).notNull(),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [uniqueIndex('class_subjects_class_subject_uidx').on(t.classId, t.subjectId)],
+  (t) => [
+    uniqueIndex('class_subjects_class_subject_uidx').on(t.classId, t.subjectId),
+    check('class_subjects_coef_chk', sql`${t.coefficient} > 0 AND ${t.coefficient} <= 20`),
+  ],
 );
 
 export const teacherAssignments = pgTable(
@@ -260,13 +288,13 @@ export const teacherAssignments = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     teacherId: uuid('teacher_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'restrict' }),
     classSubjectId: uuid('class_subject_id')
       .notNull()
-      .references(() => classSubjects.id, { onDelete: 'cascade' }),
+      .references(() => classSubjects.id, { onDelete: 'restrict' }),
     academicYearId: uuid('academic_year_id')
       .notNull()
-      .references(() => academicYears.id, { onDelete: 'cascade' }),
+      .references(() => academicYears.id, { onDelete: 'restrict' }),
     isActive: boolean('is_active').notNull().default(true),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -284,19 +312,19 @@ export const grades = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     enrollmentId: uuid('enrollment_id')
       .notNull()
-      .references(() => enrollments.id, { onDelete: 'cascade' }),
+      .references(() => enrollments.id, { onDelete: 'restrict' }),
     classSubjectId: uuid('class_subject_id')
       .notNull()
-      .references(() => classSubjects.id, { onDelete: 'cascade' }),
+      .references(() => classSubjects.id, { onDelete: 'restrict' }),
     periodId: uuid('period_id')
       .notNull()
-      .references(() => periods.id, { onDelete: 'cascade' }),
+      .references(() => periods.id, { onDelete: 'restrict' }),
     score: numeric('score', { precision: 5, scale: 2 }),
     status: text('status').$type<GradeStatus>().notNull().default('present'),
     appreciation: text('appreciation'),
     enteredBy: uuid('entered_by')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'restrict' }),
     lastOperationId: uuid('last_operation_id'),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -305,6 +333,11 @@ export const grades = pgTable(
   (t) => [
     uniqueIndex('grades_enrollment_cs_period_uidx').on(t.enrollmentId, t.classSubjectId, t.periodId),
     index('grades_period_cs_idx').on(t.periodId, t.classSubjectId),
+    check('grades_score_range_chk', sql`${t.score} IS NULL OR (${t.score} >= 0 AND ${t.score} <= 20)`),
+    check(
+      'grades_status_score_chk',
+      sql`(${t.status} = 'present' AND ${t.score} IS NOT NULL) OR (${t.status} IN ('absent', 'excused') AND ${t.score} IS NULL)`,
+    ),
   ],
 );
 
@@ -314,23 +347,25 @@ export const gradeAuditLogs = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     gradeId: uuid('grade_id')
       .notNull()
-      .references(() => grades.id, { onDelete: 'cascade' }),
+      .references(() => grades.id, { onDelete: 'restrict' }),
     enrollmentId: uuid('enrollment_id')
       .notNull()
-      .references(() => enrollments.id, { onDelete: 'cascade' }),
+      .references(() => enrollments.id, { onDelete: 'restrict' }),
     classSubjectId: uuid('class_subject_id')
       .notNull()
-      .references(() => classSubjects.id, { onDelete: 'cascade' }),
+      .references(() => classSubjects.id, { onDelete: 'restrict' }),
     periodId: uuid('period_id')
       .notNull()
-      .references(() => periods.id, { onDelete: 'cascade' }),
+      .references(() => periods.id, { onDelete: 'restrict' }),
     previousScore: numeric('previous_score', { precision: 5, scale: 2 }),
     newScore: numeric('new_score', { precision: 5, scale: 2 }),
     previousStatus: text('previous_status').$type<GradeStatus>(),
     newStatus: text('new_status').$type<GradeStatus>().notNull(),
+    previousAppreciation: text('previous_appreciation'),
+    newAppreciation: text('new_appreciation'),
     changedBy: uuid('changed_by')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'restrict' }),
     reason: text('reason').notNull().default(''),
     clientTimestamp: timestamp('client_timestamp', { withTimezone: true }),
     serverTimestamp: timestamp('server_timestamp', { withTimezone: true }).defaultNow().notNull(),
@@ -342,7 +377,7 @@ export const gradeAuditLogs = pgTable(
 export const syncOperations = pgTable(
   'sync_operations',
   {
-    operationId: uuid('operation_id').primaryKey(),
+    operationId: uuid('operation_id').notNull(),
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
@@ -352,7 +387,10 @@ export const syncOperations = pgTable(
     errorMessage: text('error_message'),
     processedAt: timestamp('processed_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index('sync_operations_user_idx').on(t.userId)],
+  (t) => [
+    primaryKey({ name: 'sync_operations_pkey', columns: [t.userId, t.operationId] }),
+    index('sync_operations_user_idx').on(t.userId),
+  ],
 );
 
 export const councilDecisions = pgTable(
@@ -361,20 +399,54 @@ export const councilDecisions = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     enrollmentId: uuid('enrollment_id')
       .notNull()
-      .references(() => enrollments.id, { onDelete: 'cascade' }),
+      .references(() => enrollments.id, { onDelete: 'restrict' }),
     periodId: uuid('period_id')
       .notNull()
-      .references(() => periods.id, { onDelete: 'cascade' }),
+      .references(() => periods.id, { onDelete: 'restrict' }),
     generalAppreciation: text('general_appreciation').notNull().default(''),
     decision: text('decision').$type<CouncilDecisionType>().notNull().default('none'),
     absencesHours: integer('absences_hours').notNull().default(0),
     decidedBy: uuid('decided_by')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'restrict' }),
     syncVersion: bigint('sync_version', { mode: 'number' }).notNull().default(1),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [uniqueIndex('council_decisions_enrollment_period_uidx').on(t.enrollmentId, t.periodId)],
+  (t) => [
+    uniqueIndex('council_decisions_enrollment_period_uidx').on(t.enrollmentId, t.periodId),
+    check('council_decisions_absences_chk', sql`${t.absencesHours} >= 0 AND ${t.absencesHours} <= 5000`),
+  ],
+);
+
+export const councilDecisionAuditLogs = pgTable(
+  'council_decision_audit_logs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    councilDecisionId: uuid('council_decision_id')
+      .notNull()
+      .references(() => councilDecisions.id, { onDelete: 'restrict' }),
+    enrollmentId: uuid('enrollment_id')
+      .notNull()
+      .references(() => enrollments.id, { onDelete: 'restrict' }),
+    periodId: uuid('period_id')
+      .notNull()
+      .references(() => periods.id, { onDelete: 'restrict' }),
+    previousDecision: text('previous_decision').$type<CouncilDecisionType>(),
+    newDecision: text('new_decision').$type<CouncilDecisionType>().notNull(),
+    previousAppreciation: text('previous_appreciation'),
+    newAppreciation: text('new_appreciation').notNull(),
+    previousAbsencesHours: integer('previous_absences_hours'),
+    newAbsencesHours: integer('new_absences_hours').notNull(),
+    changedBy: uuid('changed_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    reason: text('reason').notNull().default(''),
+    serverTimestamp: timestamp('server_timestamp', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('council_decision_audit_logs_cd_idx').on(t.councilDecisionId),
+    index('council_decision_audit_logs_period_idx').on(t.periodId),
+  ],
 );
 
 export const periodStudentResults = pgTable(
@@ -383,13 +455,13 @@ export const periodStudentResults = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     periodId: uuid('period_id')
       .notNull()
-      .references(() => periods.id, { onDelete: 'cascade' }),
+      .references(() => periods.id, { onDelete: 'restrict' }),
     classId: uuid('class_id')
       .notNull()
-      .references(() => classes.id, { onDelete: 'cascade' }),
+      .references(() => classes.id, { onDelete: 'restrict' }),
     enrollmentId: uuid('enrollment_id')
       .notNull()
-      .references(() => enrollments.id, { onDelete: 'cascade' }),
+      .references(() => enrollments.id, { onDelete: 'restrict' }),
     totalCoefficient: numeric('total_coefficient', { precision: 6, scale: 2 }).notNull(),
     totalPoints: numeric('total_points', { precision: 8, scale: 2 }).notNull(),
     generalAverage: numeric('general_average', { precision: 5, scale: 2 }),
@@ -415,16 +487,16 @@ export const periodSubjectResults = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     periodId: uuid('period_id')
       .notNull()
-      .references(() => periods.id, { onDelete: 'cascade' }),
+      .references(() => periods.id, { onDelete: 'restrict' }),
     classId: uuid('class_id')
       .notNull()
-      .references(() => classes.id, { onDelete: 'cascade' }),
+      .references(() => classes.id, { onDelete: 'restrict' }),
     enrollmentId: uuid('enrollment_id')
       .notNull()
-      .references(() => enrollments.id, { onDelete: 'cascade' }),
+      .references(() => enrollments.id, { onDelete: 'restrict' }),
     classSubjectId: uuid('class_subject_id')
       .notNull()
-      .references(() => classSubjects.id, { onDelete: 'cascade' }),
+      .references(() => classSubjects.id, { onDelete: 'restrict' }),
     sequenceScoresJson: jsonb('sequence_scores_json').$type<SequenceGradeDetail[]>().notNull().default([]),
     average: numeric('average', { precision: 5, scale: 2 }),
     weightedScore: numeric('weighted_score', { precision: 7, scale: 2 }),

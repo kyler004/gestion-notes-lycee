@@ -840,8 +840,8 @@ describe('Agent E — Results Service, Reports Routes & Typst PDF Generation', (
 
     let app: ReturnType<typeof Fastify>;
 
-    function signFor(id: string, username: string, role: UserRole): string {
-      return app.jwt.sign({ sub: id, username, fullName: username, role });
+    function signFor(id: string, _username: string, _role: UserRole): string {
+      return app.jwt.sign({ sub: id, ver: 1 });
     }
 
     beforeAll(async () => {
@@ -896,13 +896,27 @@ describe('Agent E — Results Service, Reports Routes & Typst PDF Generation', (
       });
       expect(statsSec.statusCode).toBe(403);
 
-      // class-results & honor-roll: assigned teacher & main teacher -> 200, unassigned teacher -> 403
+      // class-results & honor-roll: main teacher -> 200; subject-only & unassigned teacher -> 403 (SEC-HIGH-01)
       const assignedRes = await app.inject({
         method: 'GET',
         url: `/api/reports/class-results?classId=${fixture.classAId}&periodId=${fixture.trimester1Id}`,
         headers: { authorization: `Bearer ${assignedToken}` },
       });
-      expect(assignedRes.statusCode).toBe(200);
+      expect(assignedRes.statusCode).toBe(403);
+
+      const mainClassRes = await app.inject({
+        method: 'GET',
+        url: `/api/reports/class-results?classId=${fixture.classAId}&periodId=${fixture.trimester1Id}`,
+        headers: { authorization: `Bearer ${mainToken}` },
+      });
+      expect(mainClassRes.statusCode).toBe(200);
+
+      const assignedHonorRes = await app.inject({
+        method: 'GET',
+        url: `/api/reports/honor-roll?classId=${fixture.classAId}&periodId=${fixture.trimester1Id}`,
+        headers: { authorization: `Bearer ${assignedToken}` },
+      });
+      expect(assignedHonorRes.statusCode).toBe(403);
 
       const mainHonorRes = await app.inject({
         method: 'GET',
@@ -933,13 +947,20 @@ describe('Agent E — Results Service, Reports Routes & Typst PDF Generation', (
       });
       expect(teacherHonorPdf.statusCode).toBe(403);
 
-      // student bulletin PDF: assigned teacher -> 200, unassigned teacher -> 403
+      // student bulletin PDF: mainTeacher -> 200, subject-only & unassigned teacher -> 403 (SEC-HIGH-01)
       const assignedStudentPdf = await app.inject({
         method: 'GET',
         url: `/api/reports/bulletins/student/${fixture.student1EnrollmentId}/pdf?periodId=${fixture.trimester1Id}`,
         headers: { authorization: `Bearer ${assignedToken}` },
       });
-      expect(assignedStudentPdf.statusCode).toBe(200);
+      expect(assignedStudentPdf.statusCode).toBe(403);
+
+      const mainStudentPdf = await app.inject({
+        method: 'GET',
+        url: `/api/reports/bulletins/student/${fixture.student1EnrollmentId}/pdf?periodId=${fixture.trimester1Id}`,
+        headers: { authorization: `Bearer ${mainToken}` },
+      });
+      expect(mainStudentPdf.statusCode).toBe(200);
 
       const unassignedStudentPdf = await app.inject({
         method: 'GET',

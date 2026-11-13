@@ -8,6 +8,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DbClient } from '../db/client.js';
+import { PaginationQuerySchema } from '../lib/sql.js';
 import {
   createOrReactivateTeacherAssignment,
   createSubject,
@@ -35,24 +36,32 @@ const BooleanFlagQuerySchema = z
   .transform((v) => v === 'true')
   .optional();
 
-const SubjectGroupsQuerySchema = z.object({
-  academicYearId: z.string().uuid().optional(),
-});
+const SubjectGroupsQuerySchema = z
+  .object({
+    academicYearId: z.string().uuid().optional(),
+  })
+  .merge(PaginationQuerySchema);
 
-const SubjectsQuerySchema = z.object({
-  activeOnly: BooleanFlagQuerySchema,
-});
+const SubjectsQuerySchema = z
+  .object({
+    activeOnly: BooleanFlagQuerySchema,
+  })
+  .merge(PaginationQuerySchema);
 
-const TeacherAssignmentsQuerySchema = z.object({
-  academicYearId: z.string().uuid().optional(),
-  classId: z.string().uuid().optional(),
-  teacherId: z.string().uuid().optional(),
-  includeInactive: BooleanFlagQuerySchema,
-});
+const TeacherAssignmentsQuerySchema = z
+  .object({
+    academicYearId: z.string().uuid().optional(),
+    classId: z.string().uuid().optional(),
+    teacherId: z.string().uuid().optional(),
+    includeInactive: BooleanFlagQuerySchema,
+  })
+  .merge(PaginationQuerySchema);
 
-const MyAssignmentsQuerySchema = z.object({
-  academicYearId: z.string().uuid().optional(),
-});
+const MyAssignmentsQuerySchema = z
+  .object({
+    academicYearId: z.string().uuid().optional(),
+  })
+  .merge(PaginationQuerySchema);
 
 export async function registerSubjectsRoutes(
   app: FastifyInstance,
@@ -64,8 +73,8 @@ export async function registerSubjectsRoutes(
     '/api/subject-groups',
     { preHandler: [app.authenticate] },
     async (request) => {
-      const { academicYearId } = SubjectGroupsQuerySchema.parse(request.query);
-      const subjectGroups = await listSubjectGroups(db, academicYearId);
+      const { academicYearId, limit, offset } = SubjectGroupsQuerySchema.parse(request.query);
+      const subjectGroups = await listSubjectGroups(db, academicYearId, { limit, offset });
       return { subjectGroups };
     },
   );
@@ -84,8 +93,8 @@ export async function registerSubjectsRoutes(
     '/api/subjects',
     { preHandler: [app.authenticate] },
     async (request) => {
-      const { activeOnly } = SubjectsQuerySchema.parse(request.query);
-      const subjects = await listSubjects(db, activeOnly);
+      const { activeOnly, limit, offset } = SubjectsQuerySchema.parse(request.query);
+      const subjects = await listSubjects(db, activeOnly, { limit, offset });
       return { subjects };
     },
   );
@@ -115,7 +124,8 @@ export async function registerSubjectsRoutes(
     { preHandler: [app.authenticate] },
     async (request) => {
       const { classId } = ClassIdParamSchema.parse(request.params);
-      const classSubjects = await listClassSubjects(db, classId);
+      const pagination = PaginationQuerySchema.parse(request.query);
+      const classSubjects = await listClassSubjects(db, classId, request.currentUser, pagination);
       return { classId, classSubjects };
     },
   );
@@ -133,8 +143,8 @@ export async function registerSubjectsRoutes(
     '/api/teacher-assignments',
     { preHandler: [app.requireRoles(['admin', 'censor', 'principal'])] },
     async (request) => {
-      const filters = TeacherAssignmentsQuerySchema.parse(request.query);
-      const assignments = await listTeacherAssignments(db, filters);
+      const { limit, offset, ...filters } = TeacherAssignmentsQuerySchema.parse(request.query);
+      const assignments = await listTeacherAssignments(db, filters, { limit, offset });
       return { assignments };
     },
   );
@@ -162,11 +172,12 @@ export async function registerSubjectsRoutes(
     '/api/teachers/me/assignments',
     { preHandler: [app.authenticate] },
     async (request) => {
-      const { academicYearId } = MyAssignmentsQuerySchema.parse(request.query);
+      const { academicYearId, limit, offset } = MyAssignmentsQuerySchema.parse(request.query);
       const assignments = await listMyTeacherAssignments(
         db,
         request.currentUser.id,
         academicYearId,
+        { limit, offset },
       );
       return { assignments };
     },

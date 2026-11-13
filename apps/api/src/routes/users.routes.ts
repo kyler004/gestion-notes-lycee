@@ -17,7 +17,7 @@ export async function registerUsersRoutes(app: FastifyInstance, deps: { db: DbCl
     '/api/users',
     { preHandler: [app.requireRoles(['admin', 'censor'])] },
     async (request, reply) => {
-      const created = await usersService.createUser(request.body, request.currentUser.role);
+      const created = await usersService.createUser(request.body, request.currentUser);
       return reply.status(201).send(created);
     },
   );
@@ -26,7 +26,7 @@ export async function registerUsersRoutes(app: FastifyInstance, deps: { db: DbCl
     '/api/users/:id',
     { preHandler: [app.requireRoles(['admin', 'censor'])] },
     async (request) => {
-      return usersService.updateUser(request.params.id, request.body, request.currentUser.role);
+      return usersService.updateUser(request.params.id, request.body, request.currentUser);
     },
   );
 
@@ -34,7 +34,7 @@ export async function registerUsersRoutes(app: FastifyInstance, deps: { db: DbCl
     '/api/users/:id/reset-password',
     { preHandler: [app.requireRoles(['admin'])] },
     async (request) => {
-      return usersService.resetPassword(request.params.id, request.body, request.currentUser.role);
+      return usersService.resetPassword(request.params.id, request.body, request.currentUser);
     },
   );
 }

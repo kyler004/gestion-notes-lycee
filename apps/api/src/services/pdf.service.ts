@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -33,6 +34,12 @@ export interface PdfRenderer {
   renderHonorRoll(payload: HonorRollReportPayload): Promise<Buffer>;
 }
 
+export interface TypstPdfRendererOptions {
+  maxConcurrent?: number;
+  maxQueue?: number;
+  maxCacheEntries?: number;
+}
+
 interface ParsedImageDataUri {
   ext: string;
   buffer: Buffer;
@@ -63,7 +70,26 @@ function parseImageDataUri(dataUri: string | null | undefined): ParsedImageDataU
   return { ext, buffer };
 }
 
+function canonicalStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalStringify(item)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalStringify(record[key])}`).join(',')}}`;
+}
+
 type ReportPayloadWithSchool = {
+  generatedAt?: string;
+  period?: {
+    isOfficial?: boolean;
+    [key: string]: unknown;
+  };
   school: {
     logoBase64DataUri: string | null;
     [key: string]: unknown;
@@ -74,10 +100,23 @@ type ReportPayloadWithSchool = {
 export class TypstPdfRenderer implements PdfRenderer {
   private readonly typstBin: string;
   private readonly templatesDir: string;
+  private readonly maxConcurrent: number;
+  private readonly maxQueue: number;
+  private readonly maxCacheEntries: number;
+  private activeRenders = 0;
+  private readonly waitQueue: Array<() => void> = [];
+  private readonly officialCache = new Map<string, Buffer>();
 
-  constructor(typstBin = 'typst', templatesDir = defaultTemplatesDir) {
+  constructor(
+    typstBin = 'typst',
+    templatesDir = defaultTemplatesDir,
+    opts: TypstPdfRendererOptions = {},
+  ) {
     this.typstBin = typstBin;
     this.templatesDir = templatesDir;
+    this.maxConcurrent = Math.max(1, opts.maxConcurrent ?? 2);
+    this.maxQueue = Math.max(0, opts.maxQueue ?? 8);
+    this.maxCacheEntries = Math.max(0, opts.maxCacheEntries ?? 20);
   }
 
   async renderBulletin(payload: BulletinReportPayload): Promise<Buffer> {
@@ -92,9 +131,123 @@ export class TypstPdfRenderer implements PdfRenderer {
     return this.renderTemplate('honor-roll.typ', payload as unknown as ReportPayloadWithSchool);
   }
 
+  private buildOfficialCacheKey(
+    templateFileName: string,
+    payload: ReportPayloadWithSchool,
+    parsedLogo: ParsedImageDataUri | null,
+  ): string | null {
+    if (payload.period?.isOfficial !== true || this.maxCacheEntries <= 0) {
+      return null;
+    }
+
+    const logoBytesHash = parsedLogo
+      ? createHash('sha256')
+          .update(parsedLogo.ext)
+          .update(':')
+          .update(parsedLogo.buffer)
+          .digest('hex')
+      : 'no-logo';
+
+    const { generatedAt: _ignoredGeneratedAt, ...restPayload } = payload;
+    const deterministicPayload = {
+      ...restPayload,
+      school: {
+        ...payload.school,
+        logoBase64DataUri: null,
+      },
+    };
+
+    return createHash('sha256')
+      .update(templateFileName)
+      .update(':')
+      .update(logoBytesHash)
+      .update(':')
+      .update(canonicalStringify(deterministicPayload))
+      .digest('hex');
+  }
+
+  private getCachedPdf(cacheKey: string): Buffer | null {
+    const cached = this.officialCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+    this.officialCache.delete(cacheKey);
+    this.officialCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  private setCachedPdf(cacheKey: string, pdfBuffer: Buffer): void {
+    if (this.maxCacheEntries <= 0) {
+      return;
+    }
+    if (this.officialCache.has(cacheKey)) {
+      this.officialCache.delete(cacheKey);
+    } else if (this.officialCache.size >= this.maxCacheEntries) {
+      const oldestKey = this.officialCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.officialCache.delete(oldestKey);
+      }
+    }
+    this.officialCache.set(cacheKey, pdfBuffer);
+  }
+
+  private async acquireRenderSlot(): Promise<void> {
+    if (this.activeRenders < this.maxConcurrent) {
+      this.activeRenders += 1;
+      return;
+    }
+
+    if (this.waitQueue.length >= this.maxQueue) {
+      throw new AppError(
+        503,
+        'PDF_SERVICE_BUSY',
+        'Le service de génération PDF est saturé. Veuillez réessayer dans quelques instants.',
+      );
+    }
+
+    await new Promise<void>((resolve) => {
+      this.waitQueue.push(resolve);
+    });
+  }
+
+  private releaseRenderSlot(): void {
+    const next = this.waitQueue.shift();
+    if (next) {
+      next();
+      return;
+    }
+    this.activeRenders = Math.max(0, this.activeRenders - 1);
+  }
+
   private async renderTemplate(
     templateFileName: string,
     payload: ReportPayloadWithSchool,
+  ): Promise<Buffer> {
+    const parsedLogo = parseImageDataUri(payload.school.logoBase64DataUri);
+    const cacheKey = this.buildOfficialCacheKey(templateFileName, payload, parsedLogo);
+    if (cacheKey !== null) {
+      const cached = this.getCachedPdf(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    await this.acquireRenderSlot();
+    try {
+      const pdfBuffer = await this.compileTemplate(templateFileName, payload, parsedLogo);
+      if (cacheKey !== null) {
+        this.setCachedPdf(cacheKey, pdfBuffer);
+      }
+      return pdfBuffer;
+    } finally {
+      this.releaseRenderSlot();
+    }
+  }
+
+  private async compileTemplate(
+    templateFileName: string,
+    payload: ReportPayloadWithSchool,
+    parsedLogo: ParsedImageDataUri | null,
   ): Promise<Buffer> {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'lycee-pdf-'));
 
@@ -107,7 +260,6 @@ export class TypstPdfRenderer implements PdfRenderer {
       await copyFile(srcTemplatePath, tempTemplatePath);
 
       let logoFile: string | null = null;
-      const parsedLogo = parseImageDataUri(payload.school.logoBase64DataUri);
       if (parsedLogo) {
         logoFile = `logo.${parsedLogo.ext}`;
         await writeFile(path.join(tempDir, logoFile), parsedLogo.buffer);

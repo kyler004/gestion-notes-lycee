@@ -276,6 +276,9 @@ describe('E2E Backend MVP Workflow', () => {
     expect(t1Pull.json().teacherAssignments).toHaveLength(1);
     expect(t1Pull.json().students).toHaveLength(3);
 
+    const nowMs = Date.now();
+    const op1Ts = new Date(nowMs - 3600_000).toISOString();
+
     const op1 = randomUUID();
     const t1Push = await app.inject({
       method: 'POST',
@@ -286,37 +289,37 @@ describe('E2E Backend MVP Workflow', () => {
           {
             operationId: op1,
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-10-15T10:00:00.000Z',
+            clientTimestamp: op1Ts,
             payload: { enrollmentId: enrAlice, classSubjectId: csMathId, periodId: s1.id, score: 15, status: 'present' },
           },
           {
             operationId: randomUUID(),
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-10-15T10:01:00.000Z',
+            clientTimestamp: new Date(nowMs - 3500_000).toISOString(),
             payload: { enrollmentId: enrBob, classSubjectId: csMathId, periodId: s1.id, score: 15, status: 'present' },
           },
           {
             operationId: randomUUID(),
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-10-15T10:02:00.000Z',
+            clientTimestamp: new Date(nowMs - 3400_000).toISOString(),
             payload: { enrollmentId: enrChloe, classSubjectId: csMathId, periodId: s1.id, score: 9, status: 'present' },
           },
           {
             operationId: randomUUID(),
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-11-15T10:00:00.000Z',
+            clientTimestamp: new Date(nowMs - 1800_000).toISOString(),
             payload: { enrollmentId: enrAlice, classSubjectId: csMathId, periodId: s2.id, score: 15, status: 'present' },
           },
           {
             operationId: randomUUID(),
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-11-15T10:01:00.000Z',
+            clientTimestamp: new Date(nowMs - 1700_000).toISOString(),
             payload: { enrollmentId: enrBob, classSubjectId: csMathId, periodId: s2.id, score: 15, status: 'present' },
           },
           {
             operationId: randomUUID(),
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-11-15T10:02:00.000Z',
+            clientTimestamp: new Date(nowMs - 1600_000).toISOString(),
             payload: { enrollmentId: enrChloe, classSubjectId: csMathId, periodId: s2.id, score: 9, status: 'present' },
           },
         ],
@@ -335,7 +338,7 @@ describe('E2E Backend MVP Workflow', () => {
           {
             operationId: op1,
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-10-15T10:00:00.000Z',
+            clientTimestamp: op1Ts,
             payload: { enrollmentId: enrAlice, classSubjectId: csMathId, periodId: s1.id, score: 15, status: 'present' },
           },
         ],
@@ -421,13 +424,13 @@ describe('E2E Backend MVP Workflow', () => {
           {
             operationId: randomUUID(),
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-12-01T08:00:00.000Z',
+            clientTimestamp: new Date(Date.now() - 60_000).toISOString(),
             payload: { enrollmentId: enrAlice, classSubjectId: csMathId, periodId: s1.id, score: 19, status: 'present' },
           },
           {
             operationId: randomUUID(),
             type: 'UPSERT_GRADE',
-            clientTimestamp: '2026-12-01T08:01:00.000Z',
+            clientTimestamp: new Date(Date.now() - 30_000).toISOString(),
             payload: { enrollmentId: enrAlice, classSubjectId: csMathId, periodId: s3.id, score: 16, status: 'present' },
           },
         ],
@@ -437,7 +440,7 @@ describe('E2E Backend MVP Workflow', () => {
     expect(mixedPush.json().results[0].outcome).toBe('rejected_locked');
     expect(mixedPush.json().results[1].outcome).toBe('applied');
 
-    // 9. Exceptional unlock RBAC & audit check (Q1)
+    // 9. Exceptional unlock RBAC & hierarchy invariant check (Q1, SEC-HIGH-07)
     const censorUnlock = await app.inject({
       method: 'POST',
       url: `/api/periods/${s1.id}/unlock`,
@@ -454,6 +457,25 @@ describe('E2E Backend MVP Workflow', () => {
     });
     expect(adminBadUnlock.statusCode).toBe(400);
 
+    // Cannot unlock child S1 while parent trimester T1 is still locked (409 Conflict)
+    const blockedChildUnlock = await app.inject({
+      method: 'POST',
+      url: `/api/periods/${s1.id}/unlock`,
+      headers: adminAuth,
+      payload: { reason: 'Correction erreur de report validée en conseil' },
+    });
+    expect(blockedChildUnlock.statusCode).toBe(409);
+
+    // Unlock parent trimester T1 first, then unlock S1, then re-lock S1 & T1
+    const unlockT1 = await app.inject({
+      method: 'POST',
+      url: `/api/periods/${t1.id}/unlock`,
+      headers: adminAuth,
+      payload: { reason: 'Réouverture trimestre T1 pour correction S1' },
+    });
+    expect(unlockT1.statusCode).toBe(200);
+    expect(unlockT1.json().period.status).toBe('open');
+
     const adminUnlock = await app.inject({
       method: 'POST',
       url: `/api/periods/${s1.id}/unlock`,
@@ -466,8 +488,9 @@ describe('E2E Backend MVP Workflow', () => {
       expect(usingRealTypst).toBe(true);
     }
 
-    // Re-lock S1
+    // Re-lock S1 and T1
     expect((await app.inject({ method: 'POST', url: `/api/periods/${s1.id}/lock`, headers: adminAuth, payload: {} })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: `/api/periods/${t1.id}/lock`, headers: adminAuth, payload: { reason: 'Revalidation T1' } })).statusCode).toBe(200);
 
     // 10. Official Trimester Results, Tie Ranking (1, 1, 3), Sequence Details (Q2), Honor Roll & School Stats
     const secLogin = await app.inject({

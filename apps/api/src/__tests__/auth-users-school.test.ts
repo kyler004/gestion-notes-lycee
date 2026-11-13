@@ -210,7 +210,7 @@ describe('Auth, Users, School & Seed module', () => {
       });
 
       const inactiveLogin = await loginAs(app, 'inactive.prof', 'TeacherPass2026!');
-      expect(inactiveLogin.statusCode).toBe(403);
+      expect(inactiveLogin.statusCode).toBe(401);
     });
 
     it('rotates refresh tokens atomically and revokes entire family on reuse detection', async () => {

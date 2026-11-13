@@ -5,9 +5,10 @@ import {
   type GradingCalculatorContract,
   SchoolStatsQuerySchema,
   StudentBulletinQuerySchema,
+  type UserRole,
 } from '@lycee/shared';
 import { and, eq } from 'drizzle-orm';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { DbClient } from '../db/client.js';
 import { classes, classSubjects, enrollments, teacherAssignments } from '../db/schema.js';
@@ -22,6 +23,22 @@ const ClassIdParamSchema = z.object({
 const EnrollmentIdParamSchema = z.object({
   enrollmentId: z.string().uuid(),
 });
+
+const FULL_CLASS_REPORT_ROLES: readonly UserRole[] = [
+  'admin',
+  'censor',
+  'principal',
+  'secretary',
+];
+
+const pdfRateLimitConfig = {
+  rateLimit: {
+    hook: 'preHandler' as const,
+    max: 15,
+    timeWindow: '1 minute',
+    keyGenerator: (request: FastifyRequest) => request.currentUser?.id ?? request.ip,
+  },
+};
 
 function computePayloadEtag(payload: { generatedAt?: string }): string {
   const { generatedAt: _ignoredGeneratedAt, ...deterministicPayload } = payload;
@@ -67,13 +84,52 @@ function sendNotModifiedResponse(reply: FastifyReply, etag: string): FastifyRepl
     .send();
 }
 
-async function assertTeacherClassAccess(
+async function assertTeacherFullClassAccess(
   db: DbClient,
   user: AuthUserPayload,
   classId: string,
 ): Promise<void> {
-  if (user.role !== 'teacher') {
+  if (FULL_CLASS_REPORT_ROLES.includes(user.role)) {
     return;
+  }
+
+  if (user.role !== 'teacher') {
+    throw new ForbiddenError('Accès refusé.');
+  }
+
+  const [cls] = await db
+    .select({
+      id: classes.id,
+      mainTeacherId: classes.mainTeacherId,
+    })
+    .from(classes)
+    .where(eq(classes.id, classId))
+    .limit(1);
+
+  if (!cls) {
+    throw new NotFoundError('Classe introuvable.');
+  }
+
+  if (cls.mainTeacherId === user.id) {
+    return;
+  }
+
+  throw new ForbiddenError(
+    'Accès refusé : seul le professeur principal de la classe peut consulter les résultats complets.',
+  );
+}
+
+async function assertTeacherClassListAccess(
+  db: DbClient,
+  user: AuthUserPayload,
+  classId: string,
+): Promise<void> {
+  if (FULL_CLASS_REPORT_ROLES.includes(user.role)) {
+    return;
+  }
+
+  if (user.role !== 'teacher') {
+    throw new ForbiddenError('Accès refusé.');
   }
 
   const [cls] = await db
@@ -119,20 +175,20 @@ export async function registerReportsRoutes(
 
   app.get(
     '/api/reports/class-results',
-    { preHandler: [app.authenticate] },
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])] },
     async (request) => {
       const query = ClassPeriodReportQuerySchema.parse(request.query);
-      await assertTeacherClassAccess(deps.db, request.currentUser, query.classId);
+      await assertTeacherFullClassAccess(deps.db, request.currentUser, query.classId);
       return resultsService.getClassResults(query.classId, query.periodId);
     },
   );
 
   app.get(
     '/api/reports/honor-roll',
-    { preHandler: [app.authenticate] },
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])] },
     async (request) => {
       const query = ClassPeriodReportQuerySchema.parse(request.query);
-      await assertTeacherClassAccess(deps.db, request.currentUser, query.classId);
+      await assertTeacherFullClassAccess(deps.db, request.currentUser, query.classId);
       return resultsService.getHonorRoll(query.classId, query.periodId);
     },
   );
@@ -148,7 +204,10 @@ export async function registerReportsRoutes(
 
   app.get(
     '/api/reports/bulletins/student/:enrollmentId/pdf',
-    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])] },
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])],
+      config: pdfRateLimitConfig,
+    },
     async (request, reply) => {
       const params = EnrollmentIdParamSchema.parse(request.params);
       const query = StudentBulletinQuerySchema.parse(request.query);
@@ -158,7 +217,7 @@ export async function registerReportsRoutes(
         if (!enr) {
           throw new NotFoundError('Inscription élève introuvable.');
         }
-        await assertTeacherClassAccess(deps.db, request.currentUser, enr.classId);
+        await assertTeacherFullClassAccess(deps.db, request.currentUser, enr.classId);
       }
 
       const payload = await resultsService.buildBulletinPayload({
@@ -180,7 +239,10 @@ export async function registerReportsRoutes(
 
   app.get(
     '/api/reports/bulletins/class/:classId/pdf',
-    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])] },
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])],
+      config: pdfRateLimitConfig,
+    },
     async (request, reply) => {
       const params = ClassIdParamSchema.parse(request.params);
       const query = StudentBulletinQuerySchema.parse(request.query);
@@ -203,7 +265,10 @@ export async function registerReportsRoutes(
 
   app.get(
     '/api/reports/honor-roll/:classId/pdf',
-    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])] },
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])],
+      config: pdfRateLimitConfig,
+    },
     async (request, reply) => {
       const params = ClassIdParamSchema.parse(request.params);
       const query = StudentBulletinQuerySchema.parse(request.query);
@@ -223,10 +288,13 @@ export async function registerReportsRoutes(
 
   app.get(
     '/api/reports/class-list/:classId/pdf',
-    { preHandler: [app.authenticate] },
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])],
+      config: pdfRateLimitConfig,
+    },
     async (request, reply) => {
       const params = ClassIdParamSchema.parse(request.params);
-      await assertTeacherClassAccess(deps.db, request.currentUser, params.classId);
+      await assertTeacherClassListAccess(deps.db, request.currentUser, params.classId);
 
       const payload = await resultsService.buildClassListPayload(params.classId);
 

@@ -57,9 +57,7 @@ async function seedUser(
 
   const token = app.jwt.sign({
     sub: inserted.id,
-    username: inserted.username,
-    fullName: inserted.fullName,
-    role: inserted.role,
+    ver: inserted.tokenVersion,
   });
 
   return {
@@ -431,10 +429,18 @@ describe('Academic Structure, Students/Enrollments, Subjects & Teacher Assignmen
     expect(cs2Res.statusCode).toBe(200);
     const cs2 = cs2Res.json();
 
-    const listClassSubjectsRes = await app.inject({
+    // Unassigned teacher cannot inspect class subjects (403); censor receives 200
+    const unassignedSubjectsRes = await app.inject({
       method: 'GET',
       url: `/api/classes/${class1.id}/subjects`,
       headers: { authorization: `Bearer ${teacherA.token}` },
+    });
+    expect(unassignedSubjectsRes.statusCode).toBe(403);
+
+    const listClassSubjectsRes = await app.inject({
+      method: 'GET',
+      url: `/api/classes/${class1.id}/subjects`,
+      headers: { authorization: `Bearer ${censor.token}` },
     });
     expect(listClassSubjectsRes.statusCode).toBe(200);
     expect(listClassSubjectsRes.json().classSubjects).toHaveLength(1);
@@ -562,6 +568,15 @@ describe('Academic Structure, Students/Enrollments, Subjects & Teacher Assignmen
       headers: { authorization: `Bearer ${teacherB.token}` },
     });
     expect(teacherBClass1Res.statusCode).toBe(403);
+
+    // teacherA IS now assigned to class1 -> can read class subjects (200)
+    const assignedSubjectsRes = await app.inject({
+      method: 'GET',
+      url: `/api/classes/${class1.id}/subjects`,
+      headers: { authorization: `Bearer ${teacherA.token}` },
+    });
+    expect(assignedSubjectsRes.statusCode).toBe(200);
+    expect(assignedSubjectsRes.json().classSubjects).toHaveLength(1);
 
     // mainTeacher IS mainTeacherId of class1 -> 200 even without subject assignment
     const mainTeacherClass1Res = await app.inject({
@@ -729,10 +744,19 @@ describe('Academic Structure, Students/Enrollments, Subjects & Teacher Assignmen
     });
     const c2 = c2Res.json();
 
-    const listClassesY1 = await app.inject({
+    // Unassigned teacher does not see c1; censor sees c1
+    const listClassesTeacherBefore = await app.inject({
       method: 'GET',
       url: `/api/classes?academicYearId=${y1Id}`,
       headers: { authorization: `Bearer ${teacherA.token}` },
+    });
+    expect(listClassesTeacherBefore.statusCode).toBe(200);
+    expect(listClassesTeacherBefore.json().classes).toHaveLength(0);
+
+    const listClassesY1 = await app.inject({
+      method: 'GET',
+      url: `/api/classes?academicYearId=${y1Id}`,
+      headers: { authorization: `Bearer ${censor.token}` },
     });
     expect(listClassesY1.statusCode).toBe(200);
     expect(listClassesY1.json().classes).toHaveLength(1);
@@ -748,6 +772,16 @@ describe('Academic Structure, Students/Enrollments, Subjects & Teacher Assignmen
     expect(patchClassRes.json().name).toBe('6ème A');
     expect(patchClassRes.json().mainTeacherName).toBe(teacherA.fullName);
     expect(patchClassRes.json().syncVersion).toBeGreaterThan(c1.syncVersion);
+
+    // Once assigned as mainTeacherId, teacherA sees c1
+    const listClassesTeacherAfter = await app.inject({
+      method: 'GET',
+      url: `/api/classes?academicYearId=${y1Id}`,
+      headers: { authorization: `Bearer ${teacherA.token}` },
+    });
+    expect(listClassesTeacherAfter.statusCode).toBe(200);
+    expect(listClassesTeacherAfter.json().classes).toHaveLength(1);
+    expect(listClassesTeacherAfter.json().classes[0].id).toBe(c1.id);
 
     // Student create, patch & cross-year enrollment checks
     const stRes = await app.inject({

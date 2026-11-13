@@ -149,6 +149,9 @@ describe('roundGrade', () => {
   });
 
   it('supports custom decimal precisions and normalizes -0 to 0', () => {
+    expect(roundGrade(2.135)).toBe(2.14);
+    expect(roundGrade(10.005)).toBe(10.01);
+    expect(roundGrade(1e-7)).toBe(0);
     expect(roundGrade(12.345, 0)).toBe(12);
     expect(roundGrade(12.5, 0)).toBe(13);
     expect(roundGrade(12.345, 1)).toBe(12.3);
@@ -156,6 +159,12 @@ describe('roundGrade', () => {
     expect(roundGrade(12.3456, 3)).toBe(12.346);
     expect(Object.is(roundGrade(-0), 0)).toBe(true);
     expect(Object.is(roundGrade(-0.001), 0)).toBe(true);
+  });
+
+  it('rejects non-finite values and invalid decimals', () => {
+    expect(() => roundGrade(Number.NaN)).toThrow(RangeError);
+    expect(() => roundGrade(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => roundGrade(12, -1)).toThrow(RangeError);
   });
 });
 

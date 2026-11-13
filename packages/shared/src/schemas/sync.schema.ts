@@ -4,6 +4,7 @@ import { GRADE_STATUSES } from '../types/domain.js';
 export const SyncPullQuerySchema = z.object({
   since: z.coerce.number().int().min(0).default(0),
   academicYearId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(2000).optional().default(1000),
 });
 
 export const SyncGradePushOperationSchema = z.object({
@@ -15,7 +16,16 @@ export const SyncGradePushOperationSchema = z.object({
       enrollmentId: z.string().uuid(),
       classSubjectId: z.string().uuid(),
       periodId: z.string().uuid(),
-      score: z.number().min(0).max(20).nullable(),
+      score: z
+        .number()
+        .finite()
+        .min(0)
+        .max(20)
+        .refine(
+          (n) => Math.abs(Math.round(n * 100) - n * 100) < 1e-9,
+          'La note ne peut pas comporter plus de 2 décimales.',
+        )
+        .nullable(),
       status: z.enum(GRADE_STATUSES),
       appreciation: z.string().trim().max(255).nullable().optional(),
       reason: z.string().trim().max(255).optional(),

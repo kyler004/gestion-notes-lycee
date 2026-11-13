@@ -19,6 +19,11 @@ export async function registerSchoolRoutes(app: FastifyInstance, deps: { db: DbC
 
   app.get('/api/school/logo', { preHandler: [app.authenticate] }, async (_request, reply) => {
     const logo = await schoolService.getLogo();
-    return reply.type(logo.mimeType).send(logo.data);
+    return reply
+      .header('Content-Security-Policy', "default-src 'none'; sandbox")
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Disposition', 'inline')
+      .type(logo.mimeType)
+      .send(logo.data);
   });
 }

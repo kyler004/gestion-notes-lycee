@@ -11,9 +11,13 @@ export async function registerSyncRoutes(app: FastifyInstance, deps: { db: DbCli
     return syncService.pull(request.currentUser, query);
   });
 
-  app.post('/api/sync/push', { preHandler: [app.authenticate] }, async (request) => {
-    const body = SyncPushRequestSchema.parse(request.body);
-    const results = await syncService.push(request.currentUser, body.operations);
-    return { results };
-  });
+  app.post(
+    '/api/sync/push',
+    { preHandler: [app.requireRoles(['teacher', 'admin', 'censor'])] },
+    async (request) => {
+      const body = SyncPushRequestSchema.parse(request.body);
+      const results = await syncService.push(request.currentUser, body.operations);
+      return { results };
+    },
+  );
 }

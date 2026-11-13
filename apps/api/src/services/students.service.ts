@@ -14,11 +14,16 @@ import {
   academicYears,
   classes,
   classSubjects,
+  councilDecisions,
   enrollments,
+  grades,
+  periodStudentResults,
+  periodSubjectResults,
   students,
   teacherAssignments,
 } from '../db/schema.js';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
+import { escapeLike, type PaginationQuery } from '../lib/sql.js';
 
 export type CreateStudentInput = z.infer<typeof CreateStudentSchema>;
 export type UpdateStudentInput = z.infer<typeof UpdateStudentSchema>;
@@ -86,16 +91,22 @@ function assertValidIsoDate(dateStr: string, fieldName: string): void {
   }
 }
 
-export async function listStudents(db: DbClient, q?: string): Promise<StudentDto[]> {
+export async function listStudents(
+  db: DbClient,
+  q?: string,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
+): Promise<StudentDto[]> {
   const term = q?.trim();
   if (!term) {
     return db
       .select()
       .from(students)
-      .orderBy(asc(students.lastName), asc(students.firstName), asc(students.matricule));
+      .orderBy(asc(students.lastName), asc(students.firstName), asc(students.matricule))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
   }
 
-  const pattern = `%${term}%`;
+  const pattern = `%${escapeLike(term)}%`;
   return db
     .select()
     .from(students)
@@ -108,7 +119,9 @@ export async function listStudents(db: DbClient, q?: string): Promise<StudentDto
         sql`(${students.firstName} || ' ' || ${students.lastName}) ILIKE ${pattern}`,
       ),
     )
-    .orderBy(asc(students.lastName), asc(students.firstName), asc(students.matricule));
+    .orderBy(asc(students.lastName), asc(students.firstName), asc(students.matricule))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 }
 
 export async function createStudent(db: DbClient, input: CreateStudentInput): Promise<StudentDto> {
@@ -210,6 +223,10 @@ export async function createEnrollment(
   db: DbClient,
   input: CreateEnrollmentInput,
 ): Promise<EnrollmentDto> {
+  if (input.status !== 'active') {
+    throw new BadRequestError('Une nouvelle inscription doit avoir le statut actif (active).');
+  }
+
   return db.transaction(async (tx) => {
     const [student] = await tx
       .select({ id: students.id })
@@ -314,6 +331,36 @@ export async function updateEnrollment(
       if (targetClass.academicYearId !== existing.academicYearId) {
         throw new BadRequestError('La nouvelle classe doit appartenir à la même année scolaire.');
       }
+
+      // Block direct class reassignment once academic records exist for this enrollment (SEC-MED-12).
+      const [[hasGrade], [hasDecision], [hasStudentSnap], [hasSubjectSnap]] = await Promise.all([
+        tx
+          .select({ id: grades.id })
+          .from(grades)
+          .where(eq(grades.enrollmentId, id))
+          .limit(1),
+        tx
+          .select({ id: councilDecisions.id })
+          .from(councilDecisions)
+          .where(eq(councilDecisions.enrollmentId, id))
+          .limit(1),
+        tx
+          .select({ id: periodStudentResults.id })
+          .from(periodStudentResults)
+          .where(eq(periodStudentResults.enrollmentId, id))
+          .limit(1),
+        tx
+          .select({ id: periodSubjectResults.id })
+          .from(periodSubjectResults)
+          .where(eq(periodSubjectResults.enrollmentId, id))
+          .limit(1),
+      ]);
+
+      if (hasGrade || hasDecision || hasStudentSnap || hasSubjectSnap) {
+        throw new ConflictError(
+          'Impossible de transférer cette inscription vers une autre classe : des notes, décisions du conseil ou résultats officiels existent déjà.',
+        );
+      }
     }
 
     const syncVersion = await nextSyncVersion(tx);
@@ -342,6 +389,7 @@ export async function listClassStudents(
   classId: string,
   currentUser: AuthUserPayload,
   statusFilter?: EnrollmentStatus,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
 ): Promise<ClassStudentDto[]> {
   const [cls] = await db
     .select()
@@ -373,6 +421,13 @@ export async function listClassStudents(
         throw new ForbiddenError('Accès refusé : vous n’êtes pas affecté à cette classe.');
       }
     }
+  } else if (
+    currentUser.role !== 'admin' &&
+    currentUser.role !== 'censor' &&
+    currentUser.role !== 'principal' &&
+    currentUser.role !== 'secretary'
+  ) {
+    throw new ForbiddenError('Accès refusé.');
   }
 
   const conditions = statusFilter
@@ -399,5 +454,7 @@ export async function listClassStudents(
     .from(enrollments)
     .innerJoin(students, eq(enrollments.studentId, students.id))
     .where(conditions)
-    .orderBy(asc(students.lastName), asc(students.firstName), asc(students.matricule));
+    .orderBy(asc(students.lastName), asc(students.firstName), asc(students.matricule))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 }

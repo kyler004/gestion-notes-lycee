@@ -101,9 +101,7 @@ async function seedFixture(calculator?: GradingCalculatorContract): Promise<{
     if (!u) throw new Error('User insert failed');
     const token = app.jwt.sign({
       sub: u.id,
-      username: u.username,
-      fullName: u.fullName,
-      role: u.role,
+      ver: u.tokenVersion,
     });
     return { id: u.id, token };
   };
@@ -795,7 +793,7 @@ describe('Grades, Offline Sync, Period Locking & Council Decisions', () => {
         entityId: results[1].gradeId,
       });
 
-      // Secretary push is rejected_forbidden
+      // Secretary is blocked by route guard from sync/push (403)
       const secOpId = randomUUID();
       const secPush = await fx.app.inject({
         method: 'POST',
@@ -818,11 +816,10 @@ describe('Grades, Offline Sync, Period Locking & Council Decisions', () => {
           ],
         },
       });
-      expect(secPush.statusCode).toBe(200);
-      expect(secPush.json().results[0].outcome).toBe('rejected_forbidden');
+      expect(secPush.statusCode).toBe(403);
 
       const opsRows = await fx.db.select().from(syncOperations);
-      expect(opsRows).toHaveLength(5);
+      expect(opsRows).toHaveLength(4);
     });
 
     it('enforces strict role isolation and incremental cursor filtering on sync/pull', async () => {
@@ -922,7 +919,7 @@ describe('Grades, Offline Sync, Period Locking & Council Decisions', () => {
       expect(data3.grades).toHaveLength(0);
       expect(data3.latestCursor).toBe(vDeactivate);
 
-      // Secretary and admin see school-wide records
+      // Secretary sees school structure/rosters without raw grades, assignments, or council decisions (SEC-MED-11)
       const secretaryPull = await fx.app.inject({
         method: 'GET',
         url: '/api/sync/pull?since=0',
@@ -930,7 +927,19 @@ describe('Grades, Offline Sync, Period Locking & Council Decisions', () => {
       });
       expect(secretaryPull.statusCode).toBe(200);
       expect(secretaryPull.json().classes).toHaveLength(2);
-      expect(secretaryPull.json().grades).toHaveLength(3);
+      expect(secretaryPull.json().grades).toHaveLength(0);
+      expect(secretaryPull.json().teacherAssignments).toHaveLength(0);
+      expect(secretaryPull.json().councilDecisions).toHaveLength(0);
+
+      // Admin sees school-wide records including grades
+      const adminPull = await fx.app.inject({
+        method: 'GET',
+        url: '/api/sync/pull?since=0',
+        headers: { authorization: `Bearer ${fx.adminUser.token}` },
+      });
+      expect(adminPull.statusCode).toBe(200);
+      expect(adminPull.json().classes).toHaveLength(2);
+      expect(adminPull.json().grades).toHaveLength(3);
     });
   });
 
@@ -1315,7 +1324,7 @@ describe('Grades, Offline Sync, Period Locking & Council Decisions', () => {
       expect(adminList.statusCode).toBe(200);
       expect(adminList.json().decisions).toHaveLength(2);
 
-      // teacherMath only sees class 6A (Alice), not 5B (Charlie)
+      // teacherMath (mainTeacherId of class 6A) sees class 6A (Alice), not 5B (Charlie)
       const teacherList = await fx.app.inject({
         method: 'GET',
         url: `/api/council-decisions?periodId=${fx.trimester1Id}`,
@@ -1324,6 +1333,22 @@ describe('Grades, Offline Sync, Period Locking & Council Decisions', () => {
       expect(teacherList.statusCode).toBe(200);
       expect(teacherList.json().decisions).toHaveLength(1);
       expect(teacherList.json().decisions[0].enrollmentId).toBe(fx.enrAliceId);
+
+      // teacherFr is only a subject teacher (not mainTeacherId of any class) -> sees [] globally and 403 for classId
+      const subjectTeacherList = await fx.app.inject({
+        method: 'GET',
+        url: `/api/council-decisions?periodId=${fx.trimester1Id}`,
+        headers: { authorization: `Bearer ${fx.teacherFrUser.token}` },
+      });
+      expect(subjectTeacherList.statusCode).toBe(200);
+      expect(subjectTeacherList.json().decisions).toHaveLength(0);
+
+      const subjectTeacherClassList = await fx.app.inject({
+        method: 'GET',
+        url: `/api/council-decisions?classId=${fx.class6AId}`,
+        headers: { authorization: `Bearer ${fx.teacherFrUser.token}` },
+      });
+      expect(subjectTeacherClassList.statusCode).toBe(403);
     });
   });
 });

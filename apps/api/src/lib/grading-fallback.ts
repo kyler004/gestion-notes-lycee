@@ -6,8 +6,19 @@ import type {
 } from '@lycee/shared';
 
 function roundGrade(value: number, decimals = 2): number {
-  const factor = 10 ** decimals;
-  return Math.round((value + Number.EPSILON) * factor) / factor;
+  if (!Number.isFinite(value)) {
+    throw new RangeError(`Valeur numérique invalide pour roundGrade : ${value}`);
+  }
+  const sign = value < 0 ? -1 : 1;
+  const abs = Math.abs(value);
+  const [mantissa, expStr] = abs.toString().split('e');
+  const baseExp = expStr ? Number(expStr) : 0;
+  const shifted = Number(`${mantissa}e${baseExp + decimals}`);
+  const roundedInt = Math.round(shifted);
+  const [rMantissa, rExpStr] = roundedInt.toString().split('e');
+  const rExp = rExpStr ? Number(rExpStr) : 0;
+  const rounded = sign * Number(`${rMantissa}e${rExp - decimals}`);
+  return rounded === 0 ? 0 : rounded;
 }
 
 function resolveAppreciation(score: number | null, scale: AppreciationBand[]): string {

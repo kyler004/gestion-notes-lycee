@@ -1098,11 +1098,243 @@ export function createResultsService(
       throw new BadRequestError('La période n’appartient pas à cette année scolaire.');
     }
 
+    const isOfficial = period.status === 'locked';
+
     const yearClasses = await db
       .select()
       .from(classes)
       .where(eq(classes.academicYearId, academicYearId))
       .orderBy(asc(classes.level), asc(classes.name));
+
+    if (yearClasses.length === 0) {
+      return {
+        academicYearId: year.id,
+        academicYearLabel: year.label,
+        period: {
+          id: period.id,
+          code: period.code,
+          name: period.name,
+          type: period.type,
+          status: period.status,
+          isOfficial,
+        },
+        totalStudents: 0,
+        evaluatedStudents: 0,
+        overallAverage: null,
+        overallPassRate: null,
+        classes: [],
+      };
+    }
+
+    const rules = await loadGradingRules(academicYearId);
+    const classIds = yearClasses.map((cls) => cls.id);
+
+    const snapshotStudentRows = isOfficial
+      ? await db
+          .select({
+            classId: periodStudentResults.classId,
+            enrollmentId: periodStudentResults.enrollmentId,
+            generalAverage: periodStudentResults.generalAverage,
+            classSize: periodStudentResults.classSize,
+            classAverage: periodStudentResults.classAverage,
+            minClassAverage: periodStudentResults.minClassAverage,
+            maxClassAverage: periodStudentResults.maxClassAverage,
+            passRate: periodStudentResults.passRate,
+          })
+          .from(periodStudentResults)
+          .where(
+            and(
+              eq(periodStudentResults.periodId, period.id),
+              inArray(periodStudentResults.classId, classIds),
+            ),
+          )
+      : [];
+
+    const snapshotsByClass = new Map<string, typeof snapshotStudentRows>();
+    for (const row of snapshotStudentRows) {
+      const list = snapshotsByClass.get(row.classId) ?? [];
+      list.push(row);
+      snapshotsByClass.set(row.classId, list);
+    }
+
+    const uncachedClassIds = yearClasses
+      .filter((cls) => (snapshotsByClass.get(cls.id)?.length ?? 0) === 0)
+      .map((cls) => cls.id);
+
+    let periodInputs: PeriodDefinitionInput[] = [];
+    let childSequences: PeriodDefinitionInput[] = [];
+    const subjectsByClass = new Map<string, SubjectDefinitionInput[]>();
+    const enrollmentsByClass = new Map<
+      string,
+      Array<{
+        enrollmentId: string;
+        classId: string;
+        lastName: string;
+        firstName: string;
+        matricule: string;
+      }>
+    >();
+    const gradesByClass = new Map<string, RawGradeRecordInput[]>();
+
+    if (uncachedClassIds.length > 0) {
+      const allYearPeriods = await db
+        .select()
+        .from(periods)
+        .where(eq(periods.academicYearId, academicYearId))
+        .orderBy(asc(periods.orderIndex), asc(periods.code));
+
+      periodInputs = allYearPeriods.map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        type: p.type,
+        orderIndex: p.orderIndex,
+        weight: toNumber(p.weight) ?? 1,
+        parentPeriodId: p.parentPeriodId,
+      }));
+
+      childSequences = periodInputs
+        .filter((p) => p.type === 'sequence' && p.parentPeriodId === period.id)
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+
+      const csRows = await db
+        .select({
+          classId: classSubjects.classId,
+          classSubjectId: classSubjects.id,
+          subjectId: subjects.id,
+          subjectCode: subjects.code,
+          subjectName: subjects.name,
+          subjectShortName: subjects.shortName,
+          subjectGroupName: subjectGroups.name,
+          subjectGroupOrder: subjectGroups.orderIndex,
+          coefficient: classSubjects.coefficient,
+        })
+        .from(classSubjects)
+        .innerJoin(subjects, eq(classSubjects.subjectId, subjects.id))
+        .leftJoin(subjectGroups, eq(classSubjects.subjectGroupId, subjectGroups.id))
+        .where(inArray(classSubjects.classId, uncachedClassIds));
+
+      const csIds = csRows.map((row) => row.classSubjectId);
+      const teacherByClassSubject = new Map<string, string>();
+
+      if (csIds.length > 0) {
+        const assignmentRows = await db
+          .select({
+            classSubjectId: teacherAssignments.classSubjectId,
+            teacherName: users.fullName,
+          })
+          .from(teacherAssignments)
+          .innerJoin(users, eq(teacherAssignments.teacherId, users.id))
+          .where(
+            and(
+              eq(teacherAssignments.academicYearId, academicYearId),
+              eq(teacherAssignments.isActive, true),
+              inArray(teacherAssignments.classSubjectId, csIds),
+            ),
+          )
+          .orderBy(asc(teacherAssignments.createdAt), asc(users.fullName));
+
+        for (const assignment of assignmentRows) {
+          if (!teacherByClassSubject.has(assignment.classSubjectId)) {
+            teacherByClassSubject.set(assignment.classSubjectId, assignment.teacherName);
+          }
+        }
+      }
+
+      for (const row of csRows) {
+        const list = subjectsByClass.get(row.classId) ?? [];
+        list.push({
+          classSubjectId: row.classSubjectId,
+          subjectId: row.subjectId,
+          subjectCode: row.subjectCode,
+          subjectName: row.subjectName,
+          subjectShortName: row.subjectShortName,
+          subjectGroupName: row.subjectGroupName ?? null,
+          subjectGroupOrder: row.subjectGroupOrder ?? 999,
+          coefficient: toNumber(row.coefficient) ?? 1,
+          teacherName: teacherByClassSubject.get(row.classSubjectId) ?? null,
+        });
+        subjectsByClass.set(row.classId, list);
+      }
+
+      for (const list of subjectsByClass.values()) {
+        list.sort((a, b) => {
+          if (a.subjectGroupOrder !== b.subjectGroupOrder) {
+            return a.subjectGroupOrder - b.subjectGroupOrder;
+          }
+          const byName = compareText(a.subjectName, b.subjectName);
+          if (byName !== 0) return byName;
+          return compareText(a.subjectCode, b.subjectCode);
+        });
+      }
+
+      const activeEnrollments = await db
+        .select({
+          enrollmentId: enrollments.id,
+          classId: enrollments.classId,
+          lastName: students.lastName,
+          firstName: students.firstName,
+          matricule: students.matricule,
+        })
+        .from(enrollments)
+        .innerJoin(students, eq(enrollments.studentId, students.id))
+        .where(
+          and(inArray(enrollments.classId, uncachedClassIds), eq(enrollments.status, 'active')),
+        );
+
+      const classByEnrollment = new Map<string, string>();
+      for (const enr of activeEnrollments) {
+        classByEnrollment.set(enr.enrollmentId, enr.classId);
+        const list = enrollmentsByClass.get(enr.classId) ?? [];
+        list.push(enr);
+        enrollmentsByClass.set(enr.classId, list);
+      }
+
+      for (const list of enrollmentsByClass.values()) {
+        list.sort((a, b) => {
+          const byLast = compareText(a.lastName, b.lastName);
+          if (byLast !== 0) return byLast;
+          const byFirst = compareText(a.firstName, b.firstName);
+          if (byFirst !== 0) return byFirst;
+          return compareText(a.matricule, b.matricule);
+        });
+      }
+
+      const enrollmentIds = activeEnrollments.map((enr) => enr.enrollmentId);
+      const periodIds = periodInputs.map((p) => p.id);
+
+      if (enrollmentIds.length > 0 && periodIds.length > 0) {
+        const rawGradesRows = await db
+          .select({
+            enrollmentId: grades.enrollmentId,
+            classSubjectId: grades.classSubjectId,
+            periodId: grades.periodId,
+            score: grades.score,
+            status: grades.status,
+          })
+          .from(grades)
+          .where(
+            and(
+              inArray(grades.enrollmentId, enrollmentIds),
+              inArray(grades.periodId, periodIds),
+            ),
+          );
+
+        for (const g of rawGradesRows) {
+          const clsId = classByEnrollment.get(g.enrollmentId);
+          if (!clsId) continue;
+          const list = gradesByClass.get(clsId) ?? [];
+          list.push({
+            enrollmentId: g.enrollmentId,
+            classSubjectId: g.classSubjectId,
+            periodId: g.periodId,
+            score: toNumber(g.score),
+            status: g.status,
+          });
+          gradesByClass.set(clsId, list);
+        }
+      }
+    }
 
     let totalStudents = 0;
     let evaluatedStudents = 0;
@@ -1111,12 +1343,84 @@ export function createResultsService(
     const perClass: SchoolClassStatsEntry[] = [];
 
     for (const cls of yearClasses) {
-      const res = await getClassResults(cls.id, periodId);
-      totalStudents += res.statistics.classSize;
-      evaluatedStudents += res.statistics.evaluatedCount;
-      totalPassCount += res.statistics.passCount;
+      const snaps = snapshotsByClass.get(cls.id);
 
-      for (const st of res.students) {
+      if (snaps && snaps.length > 0) {
+        const firstSnap = snaps[0];
+        const classSize = firstSnap?.classSize ?? snaps.length;
+        let classEvaluatedCount = 0;
+        let classPassCount = 0;
+
+        for (const snap of snaps) {
+          const avg = toNumber(snap.generalAverage);
+          if (avg !== null) {
+            classEvaluatedCount += 1;
+            sumEvaluatedAverages += avg;
+            if (avg >= rules.passingThreshold) {
+              classPassCount += 1;
+            }
+          }
+        }
+
+        totalStudents += classSize;
+        evaluatedStudents += classEvaluatedCount;
+        totalPassCount += classPassCount;
+
+        perClass.push({
+          classId: cls.id,
+          className: cls.name,
+          level: cls.level,
+          series: cls.series,
+          totalStudents: classSize,
+          evaluatedStudents: classEvaluatedCount,
+          passCount: classPassCount,
+          average: toNumber(firstSnap?.classAverage),
+          passRate: toNumber(firstSnap?.passRate),
+          minAverage: toNumber(firstSnap?.minClassAverage),
+          maxAverage: toNumber(firstSnap?.maxClassAverage),
+        });
+        continue;
+      }
+
+      const classEnrollments = enrollmentsByClass.get(cls.id) ?? [];
+      const enrollmentIds = classEnrollments.map((enr) => enr.enrollmentId);
+      const classRawGrades = gradesByClass.get(cls.id) ?? [];
+      const classSubjectDefs = subjectsByClass.get(cls.id) ?? [];
+
+      const computationInput: ClassPeriodComputationInput = {
+        targetPeriodId: period.id,
+        targetPeriodType: period.type,
+        periods: periodInputs,
+        subjects: classSubjectDefs,
+        enrollmentIds,
+        grades: classRawGrades,
+        rules,
+      };
+
+      let computed = calculator.computeClassResults(computationInput);
+      if (calculator === fallbackGradingCalculator) {
+        const gradeLookup = new Map<string, { score: number | null; status: GradeStatus }>();
+        for (const g of classRawGrades) {
+          gradeLookup.set(`${g.enrollmentId}:${g.classSubjectId}:${g.periodId}`, {
+            score: g.score,
+            status: g.status,
+          });
+        }
+        computed = enhanceFallbackComputation(
+          computed,
+          computationInput,
+          childSequences,
+          gradeLookup,
+          calculator,
+        );
+      }
+
+      const classSize = classEnrollments.length;
+      totalStudents += classSize;
+      evaluatedStudents += computed.evaluatedCount;
+      totalPassCount += computed.passCount;
+
+      for (const st of computed.students) {
         if (st.generalAverage !== null) {
           sumEvaluatedAverages += st.generalAverage;
         }
@@ -1127,13 +1431,13 @@ export function createResultsService(
         className: cls.name,
         level: cls.level,
         series: cls.series,
-        totalStudents: res.statistics.classSize,
-        evaluatedStudents: res.statistics.evaluatedCount,
-        passCount: res.statistics.passCount,
-        average: res.statistics.classAverage,
-        passRate: res.statistics.passRate,
-        minAverage: res.statistics.minClassAverage,
-        maxAverage: res.statistics.maxClassAverage,
+        totalStudents: classSize,
+        evaluatedStudents: computed.evaluatedCount,
+        passCount: computed.passCount,
+        average: computed.classAverage,
+        passRate: computed.passRate,
+        minAverage: computed.minClassAverage,
+        maxAverage: computed.maxClassAverage,
       });
     }
 
@@ -1151,7 +1455,7 @@ export function createResultsService(
         name: period.name,
         type: period.type,
         status: period.status,
-        isOfficial: period.status === 'locked',
+        isOfficial,
       },
       totalStudents,
       evaluatedStudents,
