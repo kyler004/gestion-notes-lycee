@@ -2,6 +2,7 @@
   "name": "gestion-notes-lycee",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@12.18.0",
   "description": "Backend MVP et moteur partagé de gestion des notes pour lycée",
   "scripts": {
     "build": "pnpm --filter @lycee/shared build && pnpm --filter @lycee/api build",
