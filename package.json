@@ -1,0 +1,20 @@
+{
+  "name": "gestion-notes-lycee",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Backend MVP et moteur partagé de gestion des notes pour lycée",
+  "scripts": {
+    "build": "pnpm --filter @lycee/shared build && pnpm --filter @lycee/api build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @lycee/api db:generate",
+    "db:migrate": "pnpm --filter @lycee/api db:migrate",
+    "db:check": "pnpm --filter @lycee/api db:check",
+    "db:seed": "pnpm --filter @lycee/api db:seed"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
