@@ -6,3 +6,4 @@ export * from './schemas/academic.schema.js';
 export * from './schemas/grades.schema.js';
 export * from './schemas/sync.schema.js';
 export * from './schemas/reports.schema.js';
+export * from './grading/index.js';
