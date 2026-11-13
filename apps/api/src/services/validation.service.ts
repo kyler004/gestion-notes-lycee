@@ -12,10 +12,11 @@ import {
   type SubjectDefinitionInput,
 } from '@lycee/shared';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { type DbClient, nextSyncVersion } from '../db/client.js';
+import { acquireSyncWriteLock, type DbClient, nextSyncVersion } from '../db/client.js';
 import {
   classSubjects,
   classes,
+  councilDecisionAuditLogs,
   councilDecisions,
   enrollments,
   grades,
@@ -30,8 +31,10 @@ import {
   teacherAssignments,
   users,
 } from '../db/schema.js';
-import { BadRequestError, ConflictError, NotFoundError } from '../lib/errors.js';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { fallbackGradingCalculator } from '../lib/grading-fallback.js';
+import type { PaginationQuery } from '../lib/sql.js';
+import { nextAuditTimestamp } from './grades.service.js';
 
 export interface CouncilDecisionInput {
   enrollmentId: string;
@@ -293,7 +296,45 @@ export function createValidationService(
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as DbClient;
 
-      const [period] = await tx.select().from(periods).where(eq(periods.id, periodId)).limit(1);
+      const [probe] = await tx
+        .select({
+          id: periods.id,
+          parentPeriodId: periods.parentPeriodId,
+          type: periods.type,
+        })
+        .from(periods)
+        .where(eq(periods.id, periodId))
+        .limit(1);
+
+      if (!probe) {
+        throw new NotFoundError('Période introuvable.');
+      }
+
+      const childRows =
+        probe.type === 'trimester'
+          ? await tx
+              .select({ id: periods.id })
+              .from(periods)
+              .where(eq(periods.parentPeriodId, periodId))
+          : [];
+
+      // Lock involved periods in deterministic ascending UUID order before acquiring advisory write lock (SEC-HIGH-06).
+      const idsToLock = Array.from(
+        new Set([
+          probe.id,
+          ...(probe.parentPeriodId ? [probe.parentPeriodId] : []),
+          ...childRows.map((c) => c.id),
+        ]),
+      ).sort();
+
+      const lockedRows = await tx
+        .select()
+        .from(periods)
+        .where(inArray(periods.id, idsToLock))
+        .orderBy(asc(periods.id))
+        .for('update');
+
+      const period = lockedRows.find((r) => r.id === periodId);
       if (!period) {
         throw new NotFoundError('Période introuvable.');
       }
@@ -301,6 +342,8 @@ export function createValidationService(
       if (period.status === 'locked') {
         throw new ConflictError('La période est déjà verrouillée.');
       }
+
+      await acquireSyncWriteLock(txDb);
 
       const yearPeriods = await tx
         .select()
@@ -513,11 +556,11 @@ export function createValidationService(
           syncVersion,
           updatedAt: now,
         })
-        .where(eq(periods.id, period.id))
+        .where(and(eq(periods.id, period.id), eq(periods.status, 'open')))
         .returning();
 
       if (!updatedPeriod) {
-        throw new Error('Échec du verrouillage de la période.');
+        throw new ConflictError('La période est déjà verrouillée.');
       }
 
       await tx.insert(periodAuditLogs).values({
@@ -545,7 +588,28 @@ export function createValidationService(
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as DbClient;
 
-      const [period] = await tx.select().from(periods).where(eq(periods.id, periodId)).limit(1);
+      const [probe] = await tx
+        .select({ id: periods.id, parentPeriodId: periods.parentPeriodId })
+        .from(periods)
+        .where(eq(periods.id, periodId))
+        .limit(1);
+
+      if (!probe) {
+        throw new NotFoundError('Période introuvable.');
+      }
+
+      const idsToLock = Array.from(
+        new Set([probe.id, ...(probe.parentPeriodId ? [probe.parentPeriodId] : [])]),
+      ).sort();
+
+      const lockedRows = await tx
+        .select()
+        .from(periods)
+        .where(inArray(periods.id, idsToLock))
+        .orderBy(asc(periods.id))
+        .for('update');
+
+      const period = lockedRows.find((r) => r.id === periodId);
       if (!period) {
         throw new NotFoundError('Période introuvable.');
       }
@@ -553,6 +617,17 @@ export function createValidationService(
       if (period.status !== 'locked') {
         throw new ConflictError('La période est déjà ouverte.');
       }
+
+      const parentPeriod = period.parentPeriodId
+        ? lockedRows.find((r) => r.id === period.parentPeriodId)
+        : undefined;
+      if (parentPeriod?.status === 'locked') {
+        throw new ConflictError(
+          'Impossible de déverrouiller une séquence tant que son trimestre parent est verrouillé.',
+        );
+      }
+
+      await acquireSyncWriteLock(txDb);
 
       await tx.delete(periodSubjectResults).where(eq(periodSubjectResults.periodId, period.id));
       await tx.delete(periodStudentResults).where(eq(periodStudentResults.periodId, period.id));
@@ -568,11 +643,11 @@ export function createValidationService(
           syncVersion,
           updatedAt: now,
         })
-        .where(eq(periods.id, period.id))
+        .where(and(eq(periods.id, period.id), eq(periods.status, 'locked')))
         .returning();
 
       if (!updatedPeriod) {
-        throw new Error('Échec du déverrouillage de la période.');
+        throw new ConflictError('La période est déjà ouverte.');
       }
 
       await tx.insert(periodAuditLogs).values({
@@ -592,79 +667,177 @@ export function createValidationService(
   ): Promise<CouncilDecisionDto[]> {
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as DbClient;
-      const savedList: CouncilDecisionDto[] = [];
+
+      // 1. Lock involved periods + parent periods FOR SHARE in ascending UUID order (SEC-HIGH-06/07).
+      const distinctPeriodIds = Array.from(new Set(decisionsInput.map((d) => d.periodId))).sort();
+      const probedPeriods =
+        distinctPeriodIds.length > 0
+          ? await tx
+              .select({ id: periods.id, parentPeriodId: periods.parentPeriodId })
+              .from(periods)
+              .where(inArray(periods.id, distinctPeriodIds))
+          : [];
+
+      const periodIdsToLock = Array.from(
+        new Set([
+          ...distinctPeriodIds,
+          ...probedPeriods.map((p) => p.parentPeriodId).filter((pid): pid is string => pid !== null),
+        ]),
+      ).sort();
+
+      const lockedPeriods =
+        periodIdsToLock.length > 0
+          ? await tx
+              .select()
+              .from(periods)
+              .where(inArray(periods.id, periodIdsToLock))
+              .orderBy(asc(periods.id))
+              .for('share')
+          : [];
+
+      const periodMap = new Map(lockedPeriods.map((p) => [p.id, p]));
+      const enrollmentCache = new Map<
+        string,
+        { id: string; studentId: string; classId: string; academicYearId: string; status: string }
+      >();
+      const studentCache = new Map<
+        string,
+        { matricule: string; lastName: string; firstName: string }
+      >();
 
       for (const item of decisionsInput) {
-        const [enrollment] = await tx
-          .select({
-            id: enrollments.id,
-            studentId: enrollments.studentId,
-            classId: enrollments.classId,
-            academicYearId: enrollments.academicYearId,
-          })
-          .from(enrollments)
-          .where(eq(enrollments.id, item.enrollmentId))
-          .limit(1);
-
+        let enrollment = enrollmentCache.get(item.enrollmentId);
         if (!enrollment) {
-          throw new NotFoundError('Inscription élève introuvable.');
+          const [foundEnrollment] = await tx
+            .select({
+              id: enrollments.id,
+              studentId: enrollments.studentId,
+              classId: enrollments.classId,
+              academicYearId: enrollments.academicYearId,
+              status: enrollments.status,
+            })
+            .from(enrollments)
+            .where(eq(enrollments.id, item.enrollmentId))
+            .limit(1);
+
+          if (!foundEnrollment) {
+            throw new NotFoundError('Inscription élève introuvable.');
+          }
+          enrollment = foundEnrollment;
+          enrollmentCache.set(item.enrollmentId, enrollment);
         }
 
-        const [period] = await tx
-          .select({ id: periods.id, academicYearId: periods.academicYearId })
-          .from(periods)
-          .where(eq(periods.id, item.periodId))
-          .limit(1);
+        if (enrollment.status !== 'active') {
+          throw new BadRequestError(
+            'Impossible de saisir ou modifier une décision du conseil pour une inscription inactive.',
+          );
+        }
 
+        const period = periodMap.get(item.periodId);
         if (!period) {
           throw new NotFoundError('Période introuvable.');
+        }
+
+        const parentPeriod = period.parentPeriodId ? periodMap.get(period.parentPeriodId) : undefined;
+        if (period.status === 'locked' || parentPeriod?.status === 'locked') {
+          throw new ConflictError('Période verrouillée : impossible de modifier les décisions du conseil.');
         }
 
         if (enrollment.academicYearId !== period.academicYearId) {
           throw new BadRequestError("La période et l'inscription n'appartiennent pas à la même année scolaire.");
         }
 
-        const [student] = await tx
-          .select({
-            matricule: students.matricule,
-            lastName: students.lastName,
-            firstName: students.firstName,
-          })
-          .from(students)
-          .where(eq(students.id, enrollment.studentId))
+        if (!studentCache.has(enrollment.studentId)) {
+          const [student] = await tx
+            .select({
+              matricule: students.matricule,
+              lastName: students.lastName,
+              firstName: students.firstName,
+            })
+            .from(students)
+            .where(eq(students.id, enrollment.studentId))
+            .limit(1);
+          if (student) {
+            studentCache.set(enrollment.studentId, student);
+          }
+        }
+      }
+
+      // 2. Serialize writes & lock existing rows FOR UPDATE before upsert + audit (SEC-MED-09/14).
+      await acquireSyncWriteLock(txDb);
+
+      const savedList: CouncilDecisionDto[] = [];
+
+      for (const item of decisionsInput) {
+        const enrollment = enrollmentCache.get(item.enrollmentId)!;
+        const student = studentCache.get(enrollment.studentId);
+
+        const [existing] = await tx
+          .select()
+          .from(councilDecisions)
+          .where(
+            and(
+              eq(councilDecisions.enrollmentId, item.enrollmentId),
+              eq(councilDecisions.periodId, item.periodId),
+            ),
+          )
+          .for('update')
           .limit(1);
 
         const syncVersion = await nextSyncVersion(txDb);
         const now = new Date();
 
-        const [saved] = await tx
-          .insert(councilDecisions)
-          .values({
-            enrollmentId: item.enrollmentId,
-            periodId: item.periodId,
-            generalAppreciation: item.generalAppreciation,
-            decision: item.decision,
-            absencesHours: item.absencesHours,
-            decidedBy: currentUser.id,
-            syncVersion,
-            updatedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: [councilDecisions.enrollmentId, councilDecisions.periodId],
-            set: {
+        let saved: typeof councilDecisions.$inferSelect;
+        if (existing) {
+          const [updated] = await tx
+            .update(councilDecisions)
+            .set({
               generalAppreciation: item.generalAppreciation,
               decision: item.decision,
               absencesHours: item.absencesHours,
               decidedBy: currentUser.id,
               syncVersion,
               updatedAt: now,
-            },
-          })
-          .returning();
-
-        if (!saved) {
-          throw new Error("Échec d'enregistrement de la décision du conseil.");
+            })
+            .where(eq(councilDecisions.id, existing.id))
+            .returning();
+          if (!updated) {
+            throw new Error("Échec de mise à jour de la décision du conseil.");
+          }
+          saved = updated;
+        } else {
+          const [inserted] = await tx
+            .insert(councilDecisions)
+            .values({
+              enrollmentId: item.enrollmentId,
+              periodId: item.periodId,
+              generalAppreciation: item.generalAppreciation,
+              decision: item.decision,
+              absencesHours: item.absencesHours,
+              decidedBy: currentUser.id,
+              syncVersion,
+              updatedAt: now,
+            })
+            .returning();
+          if (!inserted) {
+            throw new Error("Échec d'enregistrement de la décision du conseil.");
+          }
+          saved = inserted;
         }
+
+        await tx.insert(councilDecisionAuditLogs).values({
+          councilDecisionId: saved.id,
+          enrollmentId: item.enrollmentId,
+          periodId: item.periodId,
+          previousDecision: existing?.decision ?? null,
+          newDecision: item.decision,
+          previousAppreciation: existing?.generalAppreciation ?? null,
+          newAppreciation: item.generalAppreciation,
+          previousAbsencesHours: existing?.absencesHours ?? null,
+          newAbsencesHours: item.absencesHours,
+          changedBy: currentUser.id,
+          serverTimestamp: nextAuditTimestamp(),
+        });
 
         savedList.push({
           id: saved.id,
@@ -691,6 +864,7 @@ export function createValidationService(
   async function listCouncilDecisions(
     currentUser: AuthUserPayload,
     filters: CouncilDecisionFilters,
+    pagination: PaginationQuery = { limit: 100, offset: 0 },
   ): Promise<CouncilDecisionDto[]> {
     const conditions = [];
     if (filters.classId) {
@@ -701,29 +875,31 @@ export function createValidationService(
     }
 
     if (currentUser.role === 'teacher') {
-      const assignedClassRows = await db
-        .select({ classId: classSubjects.classId })
-        .from(teacherAssignments)
-        .innerJoin(classSubjects, eq(teacherAssignments.classSubjectId, classSubjects.id))
-        .where(and(eq(teacherAssignments.teacherId, currentUser.id), eq(teacherAssignments.isActive, true)));
-
+      // Only main teachers (professeurs principaux) of a class may read disciplinary council decisions (SEC-MED-11).
       const mainTeacherClassRows = await db
         .select({ classId: classes.id })
         .from(classes)
         .where(eq(classes.mainTeacherId, currentUser.id));
 
-      const allowedClassIds = [
-        ...new Set([
-          ...assignedClassRows.map((r) => r.classId),
-          ...mainTeacherClassRows.map((r) => r.classId),
-        ]),
-      ];
+      const allowedClassIds = mainTeacherClassRows.map((r) => r.classId);
+
+      if (filters.classId && !allowedClassIds.includes(filters.classId)) {
+        throw new ForbiddenError(
+          'Accès refusé : seuls le professeur principal et la direction peuvent consulter les décisions du conseil.',
+        );
+      }
 
       if (allowedClassIds.length === 0) {
         return [];
       }
 
       conditions.push(inArray(enrollments.classId, allowedClassIds));
+    } else if (
+      currentUser.role !== 'admin' &&
+      currentUser.role !== 'censor' &&
+      currentUser.role !== 'principal'
+    ) {
+      throw new ForbiddenError('Accès refusé.');
     }
 
     const rows = await db
@@ -747,7 +923,9 @@ export function createValidationService(
       .innerJoin(enrollments, eq(councilDecisions.enrollmentId, enrollments.id))
       .innerJoin(students, eq(enrollments.studentId, students.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(asc(students.lastName), asc(students.firstName));
+      .orderBy(asc(students.lastName), asc(students.firstName))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     return rows.map((row) => ({
       id: row.id,

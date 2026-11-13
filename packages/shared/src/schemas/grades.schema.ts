@@ -6,7 +6,13 @@ export const GradeEntryInputSchema = z
     enrollmentId: z.string().uuid(),
     classSubjectId: z.string().uuid(),
     periodId: z.string().uuid(),
-    score: z.number().min(0).max(20).nullable(),
+    score: z
+      .number()
+      .finite()
+      .min(0)
+      .max(20)
+      .refine((n) => Math.abs(Math.round(n * 100) - n * 100) < 1e-9, 'La note ne peut pas comporter plus de 2 décimales.')
+      .nullable(),
     status: z.enum(GRADE_STATUSES),
     appreciation: z.string().trim().max(255).nullable().optional(),
     reason: z.string().trim().max(255).optional(),

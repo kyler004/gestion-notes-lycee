@@ -1,4 +1,5 @@
 import {
+  type AuthUserPayload,
   CAMEROON_DEFAULT_GRADING_RULES,
   type AppreciationBand,
   type CreateAcademicYearSchema,
@@ -10,11 +11,20 @@ import {
   type UpdateClassSchema,
   type UpdatePeriodSchema,
 } from '@lycee/shared';
-import { and, asc, desc, eq, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { type DbClient, nextSyncVersion } from '../db/client.js';
-import { academicYears, classes, gradingRules, periods, users } from '../db/schema.js';
+import {
+  academicYears,
+  classes,
+  classSubjects,
+  gradingRules,
+  periods,
+  teacherAssignments,
+  users,
+} from '../db/schema.js';
 import { BadRequestError, ConflictError, NotFoundError } from '../lib/errors.js';
+import type { PaginationQuery } from '../lib/sql.js';
 
 export type CreateAcademicYearInput = z.infer<typeof CreateAcademicYearSchema>;
 export type GradingRulesInput = z.infer<typeof GradingRulesSchema>;
@@ -141,11 +151,16 @@ function formatPeriod(row: typeof periods.$inferSelect): PeriodDto {
   };
 }
 
-export async function listAcademicYears(db: DbClient): Promise<AcademicYearDto[]> {
+export async function listAcademicYears(
+  db: DbClient,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
+): Promise<AcademicYearDto[]> {
   return db
     .select()
     .from(academicYears)
-    .orderBy(desc(academicYears.startDate), desc(academicYears.createdAt));
+    .orderBy(desc(academicYears.startDate), desc(academicYears.createdAt))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 }
 
 export async function createAcademicYear(
@@ -399,6 +414,20 @@ export async function upsertGradingRules(
       throw new NotFoundError('Année scolaire introuvable.');
     }
 
+    // Lock periods of the academic year in deterministic UUID order before sync version acquisition (SEC-HIGH-07).
+    const yearPeriods = await tx
+      .select({ id: periods.id, status: periods.status })
+      .from(periods)
+      .where(eq(periods.academicYearId, yearId))
+      .orderBy(asc(periods.id))
+      .for('share');
+
+    if (yearPeriods.some((period) => period.status === 'locked')) {
+      throw new ConflictError(
+        'Impossible de modifier les règles de notation : au moins une période de cette année scolaire est verrouillée.',
+      );
+    }
+
     const syncVersion = await nextSyncVersion(tx);
     const now = new Date();
     const values = {
@@ -447,7 +476,11 @@ export async function upsertGradingRules(
   });
 }
 
-export async function listPeriods(db: DbClient, yearId: string): Promise<PeriodDto[]> {
+export async function listPeriods(
+  db: DbClient,
+  yearId: string,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
+): Promise<PeriodDto[]> {
   const [year] = await db
     .select({ id: academicYears.id })
     .from(academicYears)
@@ -462,7 +495,9 @@ export async function listPeriods(db: DbClient, yearId: string): Promise<PeriodD
     .select()
     .from(periods)
     .where(eq(periods.academicYearId, yearId))
-    .orderBy(desc(periods.type), asc(periods.orderIndex));
+    .orderBy(desc(periods.type), asc(periods.orderIndex))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 
   return rows.map(formatPeriod);
 }
@@ -487,6 +522,7 @@ export async function createPeriod(db: DbClient, input: CreatePeriodInput): Prom
         .select()
         .from(periods)
         .where(eq(periods.id, input.parentPeriodId))
+        .for('share')
         .limit(1);
       if (!parent) {
         throw new NotFoundError('Période parente introuvable.');
@@ -496,6 +532,9 @@ export async function createPeriod(db: DbClient, input: CreatePeriodInput): Prom
       }
       if (parent.type !== 'trimester') {
         throw new BadRequestError('La période parente d’une séquence doit être un trimestre.');
+      }
+      if (parent.status === 'locked') {
+        throw new ConflictError('Impossible de créer une séquence sous un trimestre verrouillé.');
       }
     }
 
@@ -541,12 +580,40 @@ export async function updatePeriod(
   input: UpdatePeriodInput,
 ): Promise<PeriodDto> {
   return db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select()
+    const [probe] = await tx
+      .select({
+        id: periods.id,
+        parentPeriodId: periods.parentPeriodId,
+      })
       .from(periods)
       .where(eq(periods.id, id))
       .limit(1);
 
+    if (!probe) {
+      throw new NotFoundError('Période introuvable.');
+    }
+
+    const childProbes = await tx
+      .select({ id: periods.id })
+      .from(periods)
+      .where(eq(periods.parentPeriodId, id));
+
+    const idsToLock = Array.from(
+      new Set([
+        probe.id,
+        ...(probe.parentPeriodId ? [probe.parentPeriodId] : []),
+        ...childProbes.map((child) => child.id),
+      ]),
+    ).sort();
+
+    const lockedRows = await tx
+      .select()
+      .from(periods)
+      .where(inArray(periods.id, idsToLock))
+      .orderBy(asc(periods.id))
+      .for('update');
+
+    const existing = lockedRows.find((row) => row.id === id);
     if (!existing) {
       throw new NotFoundError('Période introuvable.');
     }
@@ -554,6 +621,20 @@ export async function updatePeriod(
     if (input.status !== undefined && input.status !== existing.status) {
       throw new BadRequestError(
         'Le verrouillage et le déverrouillage d’une période doivent être effectués via le module de validation.',
+      );
+    }
+
+    const parentRow = existing.parentPeriodId
+      ? lockedRows.find((row) => row.id === existing.parentPeriodId)
+      : undefined;
+
+    if (
+      existing.status === 'locked' ||
+      parentRow?.status === 'locked' ||
+      lockedRows.some((row) => row.parentPeriodId === id && row.status === 'locked')
+    ) {
+      throw new ConflictError(
+        'Impossible de modifier une période verrouillée ou rattachée à une période verrouillée.',
       );
     }
 
@@ -577,8 +658,47 @@ export async function updatePeriod(
   });
 }
 
-export async function listClasses(db: DbClient, academicYearId?: string): Promise<ClassDto[]> {
-  const baseQuery = db
+export async function listClasses(
+  db: DbClient,
+  academicYearId: string | undefined,
+  currentUser: AuthUserPayload,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
+): Promise<ClassDto[]> {
+  const conditions: SQL[] = [];
+  if (academicYearId) {
+    conditions.push(eq(classes.academicYearId, academicYearId));
+  }
+
+  if (currentUser.role === 'teacher') {
+    const teacherScope = or(
+      eq(classes.mainTeacherId, currentUser.id),
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(teacherAssignments)
+          .innerJoin(classSubjects, eq(teacherAssignments.classSubjectId, classSubjects.id))
+          .where(
+            and(
+              eq(classSubjects.classId, classes.id),
+              eq(teacherAssignments.teacherId, currentUser.id),
+              eq(teacherAssignments.isActive, true),
+            ),
+          ),
+      ),
+    );
+    if (teacherScope) {
+      conditions.push(teacherScope);
+    }
+  } else if (
+    currentUser.role !== 'admin' &&
+    currentUser.role !== 'censor' &&
+    currentUser.role !== 'principal' &&
+    currentUser.role !== 'secretary'
+  ) {
+    return [];
+  }
+
+  const rows = await db
     .select({
       id: classes.id,
       academicYearId: classes.academicYearId,
@@ -591,13 +711,11 @@ export async function listClasses(db: DbClient, academicYearId?: string): Promis
       updatedAt: classes.updatedAt,
     })
     .from(classes)
-    .leftJoin(users, eq(classes.mainTeacherId, users.id));
-
-  const rows = academicYearId
-    ? await baseQuery
-        .where(eq(classes.academicYearId, academicYearId))
-        .orderBy(asc(classes.level), asc(classes.name))
-    : await baseQuery.orderBy(asc(classes.level), asc(classes.name));
+    .leftJoin(users, eq(classes.mainTeacherId, users.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(asc(classes.level), asc(classes.name))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 
   return rows.map((row) => ({
     ...row,
@@ -610,6 +728,7 @@ async function assertValidMainTeacher(tx: DbClient, teacherId: string): Promise<
     .select({
       id: users.id,
       fullName: users.fullName,
+      role: users.role,
       isActive: users.isActive,
     })
     .from(users)
@@ -618,6 +737,9 @@ async function assertValidMainTeacher(tx: DbClient, teacherId: string): Promise<
 
   if (!teacher) {
     throw new NotFoundError('Professeur principal introuvable.');
+  }
+  if (teacher.role !== 'teacher') {
+    throw new BadRequestError('Le professeur principal doit disposer du rôle enseignant.');
   }
   if (!teacher.isActive) {
     throw new BadRequestError('Le compte utilisateur du professeur principal est inactif.');

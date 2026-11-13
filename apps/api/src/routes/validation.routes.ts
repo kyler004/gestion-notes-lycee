@@ -7,16 +7,19 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DbClient } from '../db/client.js';
+import { PaginationQuerySchema } from '../lib/sql.js';
 import { createValidationService } from '../services/validation.service.js';
 
 const PeriodIdParamSchema = z.object({
   periodId: z.string().uuid(),
 });
 
-const CouncilDecisionsQuerySchema = z.object({
-  classId: z.string().uuid().optional(),
-  periodId: z.string().uuid().optional(),
-});
+const CouncilDecisionsQuerySchema = z
+  .object({
+    classId: z.string().uuid().optional(),
+    periodId: z.string().uuid().optional(),
+  })
+  .merge(PaginationQuerySchema);
 
 export async function registerValidationRoutes(
   app: FastifyInstance,
@@ -66,9 +69,17 @@ export async function registerValidationRoutes(
     },
   );
 
-  app.get('/api/council-decisions', { preHandler: [app.authenticate] }, async (request) => {
-    const query = CouncilDecisionsQuerySchema.parse(request.query);
-    const decisions = await validationService.listCouncilDecisions(request.currentUser, query);
-    return { decisions };
-  });
+  app.get(
+    '/api/council-decisions',
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'teacher'])] },
+    async (request) => {
+      const { limit, offset, ...filters } = CouncilDecisionsQuerySchema.parse(request.query);
+      const decisions = await validationService.listCouncilDecisions(
+        request.currentUser,
+        filters,
+        { limit, offset },
+      );
+      return { decisions };
+    },
+  );
 }

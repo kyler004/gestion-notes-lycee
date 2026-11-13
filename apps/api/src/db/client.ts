@@ -25,9 +25,15 @@ export function createPgDb(connectionString: string): PgConnection {
   };
 }
 
+const SYNC_WRITE_ADVISORY_LOCK_KEY = 948271;
+
+export async function acquireSyncWriteLock(executor: DbClient): Promise<void> {
+  await executor.execute(sql`SELECT pg_advisory_xact_lock(${SYNC_WRITE_ADVISORY_LOCK_KEY})`);
+}
+
 export async function nextSyncVersion(executor: DbClient): Promise<number> {
   const result = (await executor.execute(
-    sql`SELECT nextval('sync_seq')::text AS val`,
+    sql`SELECT pg_advisory_xact_lock(${SYNC_WRITE_ADVISORY_LOCK_KEY}), nextval('sync_seq')::text AS val`,
   )) as { rows?: Array<{ val?: string }> };
   const row = result.rows?.[0];
   if (!row?.val) {

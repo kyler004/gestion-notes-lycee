@@ -72,6 +72,16 @@ function toSchoolProfileDto(row: {
   };
 }
 
+const PNG_MAGIC_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function hasValidLogoMagicBytes(buffer: Buffer, mimeType: 'image/png' | 'image/jpeg'): boolean {
+  if (mimeType === 'image/png') {
+    return buffer.length >= PNG_MAGIC_BYTES.length && buffer.subarray(0, 8).equals(PNG_MAGIC_BYTES);
+  }
+  // JPEG SOI marker: FF D8 FF
+  return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+}
+
 export function createSchoolService(db: DbClient) {
   async function getProfile(): Promise<SchoolProfileDto> {
     const [row] = await db
@@ -137,21 +147,42 @@ export function createSchoolService(db: DbClient) {
 
   async function uploadLogo(input: unknown): Promise<SchoolProfileDto> {
     const data = UploadSchoolLogoSchema.parse(input);
-    const cleanedBase64 = data.dataBase64
-      .replace(/^data:image\/(?:png|jpeg);base64,/i, '')
-      .replace(/\s+/g, '');
+    const trimmedInput = data.dataBase64.trim();
 
-    if (!cleanedBase64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(cleanedBase64)) {
+    let rawBase64 = trimmedInput;
+    if (/^data:/i.test(trimmedInput)) {
+      const dataUriMatch = /^data:(image\/(?:png|jpeg));base64,(.+)$/is.exec(trimmedInput);
+      if (!dataUriMatch || !dataUriMatch[1] || !dataUriMatch[2]) {
+        throw new BadRequestError('En-tête data URI invalide pour le logo.');
+      }
+      if (dataUriMatch[1].toLowerCase() !== data.mimeType) {
+        throw new BadRequestError('Le type MIME déclaré ne correspond pas aux données base64.');
+      }
+      rawBase64 = dataUriMatch[2];
+    }
+
+    const cleanedBase64 = rawBase64.replace(/\s+/g, '');
+    if (
+      !cleanedBase64 ||
+      cleanedBase64.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(cleanedBase64)
+    ) {
       throw new BadRequestError('Données base64 invalides pour le logo.');
     }
 
     const buffer = Buffer.from(cleanedBase64, 'base64');
-    if (buffer.length === 0) {
-      throw new BadRequestError('Le fichier logo est vide.');
+    if (buffer.length === 0 || buffer.toString('base64') !== cleanedBase64) {
+      throw new BadRequestError('Encodage base64 non canonique pour le logo.');
     }
 
     if (buffer.length > MAX_SCHOOL_LOGO_BYTES) {
       throw new BadRequestError('La taille du logo ne doit pas dépasser 512 Ko.');
+    }
+
+    if (!hasValidLogoMagicBytes(buffer, data.mimeType)) {
+      throw new BadRequestError(
+        'Signature binaire du logo invalide (image PNG ou JPEG authentique requise).',
+      );
     }
 
     const now = new Date();

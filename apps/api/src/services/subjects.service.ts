@@ -1,4 +1,5 @@
 import type {
+  AuthUserPayload,
   CreateSubjectGroupSchema,
   CreateSubjectSchema,
   CreateTeacherAssignmentSchema,
@@ -13,12 +14,14 @@ import {
   academicYears,
   classes,
   classSubjects,
+  periods,
   subjectGroups,
   subjects,
   teacherAssignments,
   users,
 } from '../db/schema.js';
-import { BadRequestError, ConflictError, NotFoundError } from '../lib/errors.js';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
+import type { PaginationQuery } from '../lib/sql.js';
 
 export type CreateSubjectGroupInput = z.infer<typeof CreateSubjectGroupSchema>;
 export type CreateSubjectInput = z.infer<typeof CreateSubjectSchema>;
@@ -102,14 +105,20 @@ export interface TeacherAssignmentFilters {
 export async function listSubjectGroups(
   db: DbClient,
   academicYearId?: string,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
 ): Promise<SubjectGroupDto[]> {
   const baseQuery = db.select().from(subjectGroups);
   if (academicYearId) {
     return baseQuery
       .where(eq(subjectGroups.academicYearId, academicYearId))
-      .orderBy(asc(subjectGroups.orderIndex), asc(subjectGroups.name));
+      .orderBy(asc(subjectGroups.orderIndex), asc(subjectGroups.name))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
   }
-  return baseQuery.orderBy(asc(subjectGroups.orderIndex), asc(subjectGroups.name));
+  return baseQuery
+    .orderBy(asc(subjectGroups.orderIndex), asc(subjectGroups.name))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 }
 
 export async function createSubjectGroup(
@@ -163,12 +172,23 @@ export async function createSubjectGroup(
   });
 }
 
-export async function listSubjects(db: DbClient, activeOnly?: boolean): Promise<SubjectDto[]> {
+export async function listSubjects(
+  db: DbClient,
+  activeOnly?: boolean,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
+): Promise<SubjectDto[]> {
   const baseQuery = db.select().from(subjects);
   if (activeOnly === true) {
-    return baseQuery.where(eq(subjects.isActive, true)).orderBy(asc(subjects.name));
+    return baseQuery
+      .where(eq(subjects.isActive, true))
+      .orderBy(asc(subjects.name))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
   }
-  return baseQuery.orderBy(asc(subjects.name));
+  return baseQuery
+    .orderBy(asc(subjects.name))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 }
 
 export async function createSubject(db: DbClient, input: CreateSubjectInput): Promise<SubjectDto> {
@@ -257,15 +277,45 @@ export async function updateSubject(
 export async function listClassSubjects(
   db: DbClient,
   classId: string,
+  currentUser: AuthUserPayload,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
 ): Promise<ClassSubjectDetailDto[]> {
   const [cls] = await db
-    .select({ id: classes.id })
+    .select({ id: classes.id, mainTeacherId: classes.mainTeacherId })
     .from(classes)
     .where(eq(classes.id, classId))
     .limit(1);
 
   if (!cls) {
     throw new NotFoundError('Classe introuvable.');
+  }
+
+  if (currentUser.role === 'teacher') {
+    if (cls.mainTeacherId !== currentUser.id) {
+      const [assignment] = await db
+        .select({ id: teacherAssignments.id })
+        .from(teacherAssignments)
+        .innerJoin(classSubjects, eq(teacherAssignments.classSubjectId, classSubjects.id))
+        .where(
+          and(
+            eq(teacherAssignments.teacherId, currentUser.id),
+            eq(teacherAssignments.isActive, true),
+            eq(classSubjects.classId, classId),
+          ),
+        )
+        .limit(1);
+
+      if (!assignment) {
+        throw new ForbiddenError('Accès refusé : vous n’êtes pas affecté à cette classe.');
+      }
+    }
+  } else if (
+    currentUser.role !== 'admin' &&
+    currentUser.role !== 'censor' &&
+    currentUser.role !== 'principal' &&
+    currentUser.role !== 'secretary'
+  ) {
+    throw new ForbiddenError('Accès refusé.');
   }
 
   const rows = await db
@@ -288,7 +338,9 @@ export async function listClassSubjects(
     .innerJoin(subjects, eq(classSubjects.subjectId, subjects.id))
     .leftJoin(subjectGroups, eq(classSubjects.subjectGroupId, subjectGroups.id))
     .where(eq(classSubjects.classId, classId))
-    .orderBy(asc(subjectGroups.orderIndex), asc(subjects.name));
+    .orderBy(asc(subjectGroups.orderIndex), asc(subjects.name))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 
   return rows.map((row) => ({
     ...row,
@@ -314,13 +366,17 @@ export async function upsertClassSubject(
     }
 
     const [subject] = await tx
-      .select({ id: subjects.id })
+      .select({ id: subjects.id, isActive: subjects.isActive })
       .from(subjects)
       .where(eq(subjects.id, input.subjectId))
       .limit(1);
 
     if (!subject) {
       throw new NotFoundError('Matière introuvable.');
+    }
+
+    if (!subject.isActive) {
+      throw new BadRequestError('Impossible d’associer une matière archivée (inactive) à une classe.');
     }
 
     if (input.subjectGroupId) {
@@ -339,6 +395,20 @@ export async function upsertClassSubject(
           'Le groupe de matières doit appartenir à la même année scolaire que la classe.',
         );
       }
+    }
+
+    // Lock periods of the academic year in deterministic UUID order before sync version acquisition (SEC-HIGH-07).
+    const yearPeriods = await tx
+      .select({ id: periods.id, status: periods.status })
+      .from(periods)
+      .where(eq(periods.academicYearId, cls.academicYearId))
+      .orderBy(asc(periods.id))
+      .for('share');
+
+    if (yearPeriods.some((period) => period.status === 'locked')) {
+      throw new ConflictError(
+        'Impossible de modifier les matières ou coefficients de la classe : au moins une période de cette année scolaire est verrouillée.',
+      );
     }
 
     const syncVersion = await nextSyncVersion(tx);
@@ -378,6 +448,7 @@ export async function upsertClassSubject(
 async function queryTeacherAssignmentDetails(
   db: DbClient,
   conditions: SQL[],
+  pagination: PaginationQuery,
 ): Promise<TeacherAssignmentDetailDto[]> {
   const rows = await db
     .select({
@@ -413,7 +484,9 @@ async function queryTeacherAssignmentDetails(
     .innerJoin(subjects, eq(classSubjects.subjectId, subjects.id))
     .leftJoin(subjectGroups, eq(classSubjects.subjectGroupId, subjectGroups.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(asc(classes.level), asc(classes.name), asc(subjects.name), asc(users.fullName));
+    .orderBy(asc(classes.level), asc(classes.name), asc(subjects.name), asc(users.fullName))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 
   return rows.map((row) => ({
     ...row,
@@ -426,6 +499,7 @@ async function queryTeacherAssignmentDetails(
 export async function listTeacherAssignments(
   db: DbClient,
   filters: TeacherAssignmentFilters,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
 ): Promise<TeacherAssignmentDetailDto[]> {
   const conditions: SQL[] = [];
   if (filters.academicYearId) {
@@ -441,7 +515,7 @@ export async function listTeacherAssignments(
     conditions.push(eq(teacherAssignments.isActive, true));
   }
 
-  return queryTeacherAssignmentDetails(db, conditions);
+  return queryTeacherAssignmentDetails(db, conditions, pagination);
 }
 
 export async function createOrReactivateTeacherAssignment(
@@ -461,6 +535,11 @@ export async function createOrReactivateTeacherAssignment(
 
     if (!teacher) {
       throw new NotFoundError('Enseignant introuvable.');
+    }
+    if (teacher.role !== 'teacher') {
+      throw new BadRequestError(
+        'Seul un utilisateur disposant du rôle enseignant peut être affecté à une matière.',
+      );
     }
     if (!teacher.isActive) {
       throw new BadRequestError('Impossible d’affecter un utilisateur inactif.');
@@ -578,6 +657,7 @@ export async function listMyTeacherAssignments(
   db: DbClient,
   teacherId: string,
   academicYearId?: string,
+  pagination: PaginationQuery = { limit: 100, offset: 0 },
 ): Promise<TeacherAssignmentDetailDto[]> {
   const conditions: SQL[] = [
     eq(teacherAssignments.teacherId, teacherId),
@@ -587,5 +667,5 @@ export async function listMyTeacherAssignments(
     conditions.push(eq(teacherAssignments.academicYearId, academicYearId));
   }
 
-  return queryTeacherAssignmentDetails(db, conditions);
+  return queryTeacherAssignmentDetails(db, conditions, pagination);
 }

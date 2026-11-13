@@ -13,7 +13,9 @@ async function start(): Promise<void> {
   }
 
   const pgConnection = createPgDb(config.DATABASE_URL);
-  await seedIfEmpty(pgConnection.db, config);
+  if (config.AUTO_SEED) {
+    await seedIfEmpty(pgConnection.db, config);
+  }
 
   const app = await buildApp({
     db: pgConnection.db,

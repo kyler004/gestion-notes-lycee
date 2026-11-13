@@ -1,6 +1,6 @@
 import type { AuthUserPayload, GradeStatus } from '@lycee/shared';
-import { and, desc, eq, inArray } from 'drizzle-orm';
-import { type DbClient, nextSyncVersion } from '../db/client.js';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { acquireSyncWriteLock, type DbClient, nextSyncVersion } from '../db/client.js';
 import {
   classSubjects,
   enrollments,
@@ -13,6 +13,7 @@ import {
   users,
 } from '../db/schema.js';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
+import type { PaginationQuery } from '../lib/sql.js';
 
 let lastAuditTimestampMs = 0;
 
@@ -56,7 +57,6 @@ export interface GradeDto {
   status: GradeStatus;
   appreciation: string | null;
   enteredBy: string;
-  lastOperationId: string | null;
   syncVersion: number;
   createdAt: string;
   updatedAt: string;
@@ -81,6 +81,8 @@ export interface GradeAuditLogDto {
   newScore: number | null;
   previousStatus: GradeStatus | null;
   newStatus: GradeStatus;
+  previousAppreciation: string | null;
+  newAppreciation: string | null;
   changedBy: string;
   changedByName: string;
   reason: string;
@@ -90,7 +92,11 @@ export interface GradeAuditLogDto {
 }
 
 export function createGradesService(db: DbClient) {
-  async function listGrades(currentUser: AuthUserPayload, filters: GradeListFilters): Promise<GradeDto[]> {
+  async function listGrades(
+    currentUser: AuthUserPayload,
+    filters: GradeListFilters,
+    pagination: PaginationQuery = { limit: 100, offset: 0 },
+  ): Promise<GradeDto[]> {
     const conditions = [];
 
     if (filters.classId) {
@@ -142,6 +148,12 @@ export function createGradesService(db: DbClient) {
           ),
         );
       }
+    } else if (
+      currentUser.role !== 'admin' &&
+      currentUser.role !== 'censor' &&
+      currentUser.role !== 'principal'
+    ) {
+      throw new ForbiddenError('Accès refusé.');
     }
 
     const rows = await db
@@ -156,7 +168,6 @@ export function createGradesService(db: DbClient) {
         status: grades.status,
         appreciation: grades.appreciation,
         enteredBy: grades.enteredBy,
-        lastOperationId: grades.lastOperationId,
         syncVersion: grades.syncVersion,
         createdAt: grades.createdAt,
         updatedAt: grades.updatedAt,
@@ -165,7 +176,9 @@ export function createGradesService(db: DbClient) {
       .innerJoin(enrollments, eq(grades.enrollmentId, enrollments.id))
       .innerJoin(students, eq(enrollments.studentId, students.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(students.lastName, students.firstName, grades.createdAt);
+      .orderBy(students.lastName, students.firstName, grades.createdAt)
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     return rows.map((row) => ({
       id: row.id,
@@ -178,7 +191,6 @@ export function createGradesService(db: DbClient) {
       status: row.status,
       appreciation: row.appreciation,
       enteredBy: row.enteredBy,
-      lastOperationId: row.lastOperationId,
       syncVersion: row.syncVersion,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -188,33 +200,77 @@ export function createGradesService(db: DbClient) {
   async function bulkUpsertGrades(currentUser: AuthUserPayload, entries: GradeEntryInput[]): Promise<GradeDto[]> {
     return db.transaction(async (tx) => {
       const txDb = tx as unknown as DbClient;
-      const periodCache = new Map<string, typeof periods.$inferSelect>();
+
+      // 1. Verify role & active teacher assignments FIRST to avoid IDOR/existence oracle leaks (SEC-MED-11).
+      if (currentUser.role === 'teacher') {
+        const distinctCsIds = Array.from(new Set(entries.map((e) => e.classSubjectId)));
+        const activeAssignments =
+          distinctCsIds.length > 0
+            ? await tx
+                .select({ classSubjectId: teacherAssignments.classSubjectId })
+                .from(teacherAssignments)
+                .where(
+                  and(
+                    eq(teacherAssignments.teacherId, currentUser.id),
+                    inArray(teacherAssignments.classSubjectId, distinctCsIds),
+                    eq(teacherAssignments.isActive, true),
+                  ),
+                )
+            : [];
+
+        const assignedSet = new Set(activeAssignments.map((a) => a.classSubjectId));
+        for (const entry of entries) {
+          if (!assignedSet.has(entry.classSubjectId)) {
+            throw new ForbiddenError("Vous n'êtes pas affecté à cette matière.");
+          }
+        }
+      } else if (currentUser.role !== 'admin' && currentUser.role !== 'censor') {
+        throw new ForbiddenError('Accès refusé.');
+      }
+
+      // 2. Acquire FOR SHARE locks on all involved periods + parent trimesters in ascending UUID order (SEC-HIGH-06/07).
+      const distinctPeriodIds = Array.from(new Set(entries.map((e) => e.periodId))).sort();
+      const probedPeriods =
+        distinctPeriodIds.length > 0
+          ? await tx
+              .select({ id: periods.id, parentPeriodId: periods.parentPeriodId })
+              .from(periods)
+              .where(inArray(periods.id, distinctPeriodIds))
+          : [];
+
+      const periodIdsToLock = Array.from(
+        new Set([
+          ...distinctPeriodIds,
+          ...probedPeriods.map((p) => p.parentPeriodId).filter((pid): pid is string => pid !== null),
+        ]),
+      ).sort();
+
+      const lockedPeriods =
+        periodIdsToLock.length > 0
+          ? await tx
+              .select()
+              .from(periods)
+              .where(inArray(periods.id, periodIdsToLock))
+              .orderBy(asc(periods.id))
+              .for('share')
+          : [];
+
+      const periodMap = new Map(lockedPeriods.map((p) => [p.id, p]));
       const classSubjectCache = new Map<string, typeof classSubjects.$inferSelect>();
       const enrollmentCache = new Map<string, typeof enrollments.$inferSelect>();
-      const teacherAuthCache = new Map<string, boolean>();
-
-      const results: GradeDto[] = [];
 
       for (const entry of entries) {
-        let period = periodCache.get(entry.periodId);
+        const period = periodMap.get(entry.periodId);
         if (!period) {
-          const [foundPeriod] = await tx
-            .select()
-            .from(periods)
-            .where(eq(periods.id, entry.periodId))
-            .limit(1);
-          if (!foundPeriod) {
-            throw new NotFoundError('Période introuvable.');
-          }
-          period = foundPeriod;
-          periodCache.set(entry.periodId, period);
+          throw new NotFoundError('Période introuvable.');
         }
 
         if (period.type !== 'sequence') {
           throw new BadRequestError('La saisie des notes est uniquement autorisée sur une séquence.');
         }
 
-        if (period.status === 'locked') {
+        const parentPeriod = period.parentPeriodId ? periodMap.get(period.parentPeriodId) : undefined;
+        if (period.status === 'locked' || parentPeriod?.status === 'locked') {
           throw new ConflictError('Période verrouillée');
         }
 
@@ -246,6 +302,10 @@ export function createGradesService(db: DbClient) {
           enrollmentCache.set(entry.enrollmentId, enrollment);
         }
 
+        if (enrollment.status !== 'active') {
+          throw new BadRequestError('Impossible de saisir ou modifier une note pour une inscription inactive.');
+        }
+
         if (enrollment.classId !== classSubject.classId) {
           throw new BadRequestError("L'inscription élève n'appartient pas à la classe de cette matière.");
         }
@@ -253,29 +313,15 @@ export function createGradesService(db: DbClient) {
         if (enrollment.academicYearId !== period.academicYearId) {
           throw new BadRequestError("La période et l'inscription n'appartiennent pas à la même année scolaire.");
         }
+      }
 
-        if (currentUser.role === 'teacher') {
-          let isAssigned = teacherAuthCache.get(entry.classSubjectId);
-          if (isAssigned === undefined) {
-            const [assignment] = await tx
-              .select({ id: teacherAssignments.id })
-              .from(teacherAssignments)
-              .where(
-                and(
-                  eq(teacherAssignments.teacherId, currentUser.id),
-                  eq(teacherAssignments.classSubjectId, entry.classSubjectId),
-                  eq(teacherAssignments.isActive, true),
-                ),
-              )
-              .limit(1);
-            isAssigned = Boolean(assignment);
-            teacherAuthCache.set(entry.classSubjectId, isAssigned);
-          }
+      // 3. Serialize grade writes AFTER period locks & validations (SEC-MED-09 / SEC-HIGH-10).
+      await acquireSyncWriteLock(txDb);
 
-          if (!isAssigned) {
-            throw new ForbiddenError("Vous n'êtes pas affecté à cette matière.");
-          }
-        }
+      const results: GradeDto[] = [];
+
+      for (const entry of entries) {
+        const enrollment = enrollmentCache.get(entry.enrollmentId)!;
 
         const [existing] = await tx
           .select()
@@ -287,11 +333,22 @@ export function createGradesService(db: DbClient) {
               eq(grades.periodId, entry.periodId),
             ),
           )
+          .for('update')
           .limit(1);
+
+        const scoreStr = entry.score !== null ? entry.score.toFixed(2) : null;
+        if (existing) {
+          const existingScoreStr = existing.score !== null ? Number(existing.score).toFixed(2) : null;
+          const scoreOrStatusChanged = scoreStr !== existingScoreStr || entry.status !== existing.status;
+          if (scoreOrStatusChanged && !entry.reason?.trim()) {
+            throw new BadRequestError(
+              'Un motif (reason) est obligatoire pour modifier une note existante.',
+            );
+          }
+        }
 
         const syncVersion = await nextSyncVersion(txDb);
         const now = new Date();
-        const scoreStr = entry.score !== null ? entry.score.toFixed(2) : null;
         const resolvedAppreciation =
           entry.appreciation !== undefined ? entry.appreciation : (existing?.appreciation ?? null);
 
@@ -344,8 +401,10 @@ export function createGradesService(db: DbClient) {
           newScore: scoreStr,
           previousStatus: existing?.status ?? null,
           newStatus: entry.status,
+          previousAppreciation: existing?.appreciation ?? null,
+          newAppreciation: resolvedAppreciation,
           changedBy: currentUser.id,
-          reason: entry.reason ?? '',
+          reason: entry.reason?.trim() ?? '',
           serverTimestamp: nextAuditTimestamp(),
         });
 
@@ -360,7 +419,6 @@ export function createGradesService(db: DbClient) {
           status: savedGrade.status,
           appreciation: savedGrade.appreciation,
           enteredBy: savedGrade.enteredBy,
-          lastOperationId: savedGrade.lastOperationId,
           syncVersion: savedGrade.syncVersion,
           createdAt: savedGrade.createdAt.toISOString(),
           updatedAt: savedGrade.updatedAt.toISOString(),
@@ -371,7 +429,10 @@ export function createGradesService(db: DbClient) {
     });
   }
 
-  async function listGradeAuditLogs(filters: GradeAuditFilters): Promise<GradeAuditLogDto[]> {
+  async function listGradeAuditLogs(
+    filters: GradeAuditFilters,
+    pagination: PaginationQuery = { limit: 100, offset: 0 },
+  ): Promise<GradeAuditLogDto[]> {
     const conditions = [];
     if (filters.classId) {
       conditions.push(eq(enrollments.classId, filters.classId));
@@ -406,6 +467,8 @@ export function createGradesService(db: DbClient) {
         newScore: gradeAuditLogs.newScore,
         previousStatus: gradeAuditLogs.previousStatus,
         newStatus: gradeAuditLogs.newStatus,
+        previousAppreciation: gradeAuditLogs.previousAppreciation,
+        newAppreciation: gradeAuditLogs.newAppreciation,
         changedBy: gradeAuditLogs.changedBy,
         changedByName: users.fullName,
         reason: gradeAuditLogs.reason,
@@ -421,7 +484,9 @@ export function createGradesService(db: DbClient) {
       .innerJoin(periods, eq(gradeAuditLogs.periodId, periods.id))
       .innerJoin(users, eq(gradeAuditLogs.changedBy, users.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(gradeAuditLogs.serverTimestamp), desc(gradeAuditLogs.id));
+      .orderBy(desc(gradeAuditLogs.serverTimestamp), desc(gradeAuditLogs.id))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
 
     return rows.map((row) => ({
       id: row.id,
@@ -442,6 +507,8 @@ export function createGradesService(db: DbClient) {
       newScore: row.newScore !== null ? Number(row.newScore) : null,
       previousStatus: row.previousStatus,
       newStatus: row.newStatus,
+      previousAppreciation: row.previousAppreciation,
+      newAppreciation: row.newAppreciation,
       changedBy: row.changedBy,
       changedByName: row.changedByName,
       reason: row.reason,

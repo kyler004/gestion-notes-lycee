@@ -9,6 +9,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DbClient } from '../db/client.js';
+import { PaginationQuerySchema } from '../lib/sql.js';
 import {
   activateAcademicYear,
   createAcademicYear,
@@ -31,9 +32,11 @@ const YearIdParamSchema = z.object({
   yearId: z.string().uuid(),
 });
 
-const ClassesQuerySchema = z.object({
-  academicYearId: z.string().uuid().optional(),
-});
+const ClassesQuerySchema = z
+  .object({
+    academicYearId: z.string().uuid().optional(),
+  })
+  .merge(PaginationQuerySchema);
 
 export async function registerAcademicRoutes(
   app: FastifyInstance,
@@ -44,8 +47,9 @@ export async function registerAcademicRoutes(
   app.get(
     '/api/academic-years',
     { preHandler: [app.authenticate] },
-    async () => {
-      const academicYears = await listAcademicYears(db);
+    async (request) => {
+      const pagination = PaginationQuerySchema.parse(request.query);
+      const academicYears = await listAcademicYears(db, pagination);
       return { academicYears };
     },
   );
@@ -93,7 +97,8 @@ export async function registerAcademicRoutes(
     { preHandler: [app.authenticate] },
     async (request) => {
       const { yearId } = YearIdParamSchema.parse(request.params);
-      const periods = await listPeriods(db, yearId);
+      const pagination = PaginationQuerySchema.parse(request.query);
+      const periods = await listPeriods(db, yearId, pagination);
       return { periods };
     },
   );
@@ -122,8 +127,11 @@ export async function registerAcademicRoutes(
     '/api/classes',
     { preHandler: [app.authenticate] },
     async (request) => {
-      const { academicYearId } = ClassesQuerySchema.parse(request.query);
-      const classes = await listClasses(db, academicYearId);
+      const { academicYearId, limit, offset } = ClassesQuerySchema.parse(request.query);
+      const classes = await listClasses(db, academicYearId, request.currentUser, {
+        limit,
+        offset,
+      });
       return { classes };
     },
   );

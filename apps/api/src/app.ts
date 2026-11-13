@@ -8,7 +8,7 @@ import fastifyStatic from '@fastify/static';
 import { gradingCalculator, type GradingCalculatorContract } from '@lycee/shared';
 import { sql } from 'drizzle-orm';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { AppConfig } from './config/env.js';
+import { parseCorsOrigins, parseTrustProxy, type AppConfig } from './config/env.js';
 import type { DbClient } from './db/client.js';
 import { registerErrorHandler } from './lib/errors.js';
 import { authPlugin } from './plugins/auth.js';
@@ -49,6 +49,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   } = options;
 
   const app = Fastify({
+    trustProxy: parseTrustProxy(config.TRUST_PROXY),
     logger,
     bodyLimit: 2 * 1024 * 1024,
   });
@@ -56,13 +57,30 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerErrorHandler(app);
 
   await app.register(helmet, {
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        fontSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: null,
+      },
+    },
   });
 
-  await app.register(cors, {
-    origin: config.CORS_ORIGIN === '*' ? true : config.CORS_ORIGIN.split(',').map((s) => s.trim()),
-    credentials: true,
-  });
+  const corsOrigin = parseCorsOrigins(config.CORS_ORIGIN);
+  if (corsOrigin !== false) {
+    await app.register(cors, {
+      origin: corsOrigin,
+      credentials: false,
+    });
+  }
 
   if (enableRateLimit) {
     await app.register(rateLimit, {

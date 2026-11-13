@@ -4,7 +4,13 @@ import { USER_ROLES } from '../types/domain.js';
 export const LoginSchema = z.object({
   username: z.string().trim().min(2).max(64),
   password: z.string().min(6).max(128),
-  deviceLabel: z.string().trim().max(120).optional(),
+  deviceLabel: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .regex(/^[^\p{C}]+$/u, 'Libellé appareil invalide (caractères de contrôle interdits).')
+    .optional(),
 });
 
 export const RefreshTokenSchema = z.object({
