@@ -9,13 +9,15 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
 
 RUN pnpm install --frozen-lockfile
 
 COPY packages/shared packages/shared
 COPY apps/api apps/api
+COPY apps/web apps/web
 
-RUN pnpm --filter @lycee/shared build && pnpm --filter @lycee/api build
+RUN pnpm --filter @lycee/shared build && pnpm --filter @lycee/api build && pnpm --filter @lycee/web build
 
 FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS prod-deps
 
@@ -28,6 +30,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
 
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
@@ -69,6 +72,7 @@ COPY --from=builder --chown=node:node /app/apps/api/package.json ./apps/api/
 COPY --from=builder --chown=node:node /app/apps/api/dist ./apps/api/dist
 COPY --from=builder --chown=node:node /app/apps/api/drizzle ./apps/api/drizzle
 COPY --from=builder --chown=node:node /app/apps/api/src/templates ./apps/api/src/templates
+COPY --from=builder --chown=node:node /app/apps/web/dist ./apps/web/dist
 
 USER node
 

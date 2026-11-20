@@ -16,6 +16,8 @@ apps/web/dev-dist/
 
 # Tests & coverage
 coverage/
+playwright-report/
+test-results/
 
 # Logs
 *.log
