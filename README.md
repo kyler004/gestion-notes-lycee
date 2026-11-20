@@ -2,7 +2,7 @@
 
 Application de gestion des notes scolaires conçue pour remplacer les cahiers de notes et classeurs Excel par un outil unique, fiable et utilisable même avec une connexion internet instable : saisie des notes, calcul automatique des moyennes et rangs, tableaux de résultats et génération des bulletins officiels en PDF.
 
-> La description détaillée des choix techniques et d'architecture est disponible dans [`docs/architecture.md`](docs/architecture.md).
+> L'index de toute la documentation du projet est disponible dans [`docs/README.md`](docs/README.md), et les choix d'architecture dans [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
