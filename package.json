@@ -5,7 +5,7 @@
   "packageManager": "pnpm@12.18.0",
   "description": "Backend MVP et moteur partagé de gestion des notes pour lycée",
   "scripts": {
-    "build": "pnpm --filter @lycee/shared build && pnpm --filter @lycee/api build",
+    "build": "pnpm --filter @lycee/shared build && pnpm --filter @lycee/api build && pnpm --filter @lycee/web build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "db:generate": "pnpm --filter @lycee/api db:generate",
