@@ -1,4 +1,4 @@
-import { RiBookOpenFill, RiBuilding2Fill, RiFileTextFill, RiRocket2Fill, RiArrowRightLine } from '@remixicon/react';
+import { RiBookOpenFill, RiBuilding2Fill, RiFileTextFill, RiRocket2Fill, RiArrowRightFill } from '@remixicon/react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardDescription, CardTitle } from '@/components/ui/card';
@@ -86,7 +86,7 @@ function DashboardPage() {
                     {m.desc}
                   </CardDescription>
                 </div>
-                <RiArrowRightLine className="size-5 text-slate-200 transition-all group-hover:translate-x-1 group-hover:text-primary" />
+                <RiArrowRightFill className="size-5 text-slate-200 transition-all group-hover:translate-x-1 group-hover:text-primary" />
               </Card>
             </Link>
           ))}

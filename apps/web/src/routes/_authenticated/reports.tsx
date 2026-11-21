@@ -1,3 +1,4 @@
+import { RiFileTextFill } from '@remixicon/react';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -7,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/header';
 import { hasRoleAccess } from '@/lib/auth/roles';
 import { t } from '@/lib/i18n';
 import { useSessionStore } from '@/stores/session.store';
@@ -25,12 +27,15 @@ export const Route = createFileRoute('/_authenticated/reports')({
 
 function ReportsPlaceholderPage() {
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">{t('nav.reports')}</h1>
-        <Badge variant="secondary">{t('dashboard.cards.reportsPhase')}</Badge>
-      </div>
-      <Card>
+    <div className="space-y-6">
+      <PageHeader
+        tone="blue"
+        icon={<RiFileTextFill />}
+        title={t('nav.reports')}
+        subtitle={t('dashboard.cards.reportsDesc')}
+        actions={<Badge variant="dark">{t('dashboard.cards.reportsPhase')}</Badge>}
+      />
+      <Card variant="elevated">
         <CardHeader>
           <CardTitle>{t('dashboard.cards.reportsTitle')}</CardTitle>
           <CardDescription>{t('dashboard.cards.reportsDesc')}</CardDescription>

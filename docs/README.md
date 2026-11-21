@@ -7,6 +7,7 @@ Ce répertoire centralise la documentation technique et fonctionnelle du projet.
 | Document | Langue | Date | Responsable | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | [`architecture.md`](./architecture.md) | FR | 2026-11-20 | Équipe projet | Architecture technique globale et décisions d'architecture (ADR). |
+| [`frontend/design-system.md`](./frontend/design-system.md) | FR | 2026-11-20 | Équipe frontend | Design system officiel et exclusif du client PWA (palette, typographie, icônes, composants). |
 | [`frontend/`](./frontend/) | — | 2026-11-20 | Équipe frontend | Dossier réservé aux documents du client PWA (ajoutés sur demande). |
 
 ## Convention d'ajout d'un document
