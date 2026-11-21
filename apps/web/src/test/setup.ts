@@ -12,20 +12,26 @@ vi.mock('virtual:pwa-register/react', () => ({
 }));
 
 if (typeof window !== 'undefined') {
-  window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
+  window.scrollTo = (() => undefined) as unknown as typeof window.scrollTo;
   if (!window.matchMedia) {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
-      value: vi.fn().mockImplementation((query: string) => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      })),
+      value: (query: string) => {
+        const minWidthMatch = /\(min-width:\s*(\d+)px\)/.exec(query);
+        const matches = minWidthMatch
+          ? window.innerWidth >= Number(minWidthMatch[1])
+          : false;
+        return {
+          matches,
+          media: query,
+          onchange: null,
+          addListener: () => undefined,
+          removeListener: () => undefined,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+          dispatchEvent: () => false,
+        };
+      },
     });
   }
 }
