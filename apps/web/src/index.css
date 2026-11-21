@@ -1,34 +1,135 @@
 @import "tailwindcss";
+@import "@fontsource-variable/plus-jakarta-sans";
 
+/*
+ * Design system « Lycée » — palette fournie par le client.
+ * Échelles brutes (50→900) puis jetons sémantiques.
+ */
 @theme {
-  --color-background: #f6f7f4;
-  --color-foreground: #141c19;
+  /* Violet */
+  --color-violet-50: #e1d4ec;
+  --color-violet-100: #c3a7d9;
+  --color-violet-200: #a679c5;
+  --color-violet-300: #8353a1;
+  --color-violet-400: #59376e;
+  --color-violet-500: #321d40;
+  --color-violet-600: #180c20;
+
+  /* Ardoise (bleu-gris) */
+  --color-slate-50: #e5f3f7;
+  --color-slate-100: #a8dae7;
+  --color-slate-200: #83b2be;
+  --color-slate-300: #668895;
+  --color-slate-400: #4a666d;
+  --color-slate-500: #2f4348;
+  --color-slate-600: #172326;
+
+  /* Émeraude */
+  --color-emerald-50: #76fcc9;
+  --color-emerald-100: #41d4a1;
+  --color-emerald-200: #32a980;
+  --color-emerald-300: #248060;
+  --color-emerald-400: #165a42;
+  --color-emerald-500: #0a3627;
+  --color-emerald-600: #02140d;
+
+  /* Bleu */
+  --color-blue-50: #edf1fa;
+  --color-blue-100: #c6d4f1;
+  --color-blue-200: #8eade5;
+  --color-blue-300: #5788ce;
+  --color-blue-400: #3f6499;
+  --color-blue-500: #284267;
+  --color-blue-600: #132339;
+
+  /* Prune */
+  --color-plum-50: #f4eff8;
+  --color-plum-100: #e0cde9;
+  --color-plum-200: #c49fd5;
+  --color-plum-300: #aa71c0;
+  --color-plum-400: #815093;
+  --color-plum-500: #563463;
+  --color-plum-600: #2f1a37;
+
+  /* Neutres */
+  --color-ink-50: #dad8d8;
+  --color-ink-100: #b4b0b6;
+  --color-ink-200: #908993;
+  --color-ink-300: #6b656e;
+  --color-ink-400: #48444a;
+  --color-ink-500: #282529;
+  --color-ink-600: #121013;
+
+  /* Hors palette (dérivés harmonisés) : danger = brique, avertissement = ambre */
+  --color-brick-50: #fbe9e7;
+  --color-brick-100: #f2b9b2;
+  --color-brick-300: #d4574d;
+  --color-brick-400: #b23a3a;
+  --color-brick-500: #7d2227;
+  --color-amber-50: #fdf2d6;
+  --color-amber-100: #f6d88b;
+  --color-amber-300: #d99a1f;
+  --color-amber-500: #7a5107;
+
+  /* Jetons sémantiques */
+  --color-background: #f1f5f6;
+  --color-foreground: #172326;
   --color-card: #ffffff;
-  --color-card-foreground: #141c19;
+  --color-card-foreground: #172326;
   --color-popover: #ffffff;
-  --color-popover-foreground: #141c19;
-  --color-primary: #0f4c3a;
-  --color-primary-foreground: #f8fbf9;
-  --color-secondary: #e9eeeb;
-  --color-secondary-foreground: #1b2823;
-  --color-muted: #eef2ef;
-  --color-muted-foreground: #55635d;
-  --color-accent: #e1ebe6;
-  --color-accent-foreground: #0f4c3a;
-  --color-destructive: #b91c1c;
-  --color-destructive-foreground: #fef2f2;
-  --color-warning: #b45309;
-  --color-warning-foreground: #fffbeb;
-  --color-border: #d6deda;
-  --color-input: #cbd5d0;
-  --color-ring: #0f4c3a;
+  --color-popover-foreground: #172326;
+  --color-primary: #248060;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e5f3f7;
+  --color-secondary-foreground: #2f4348;
+  --color-muted: #e7eef0;
+  --color-muted-foreground: #5a6f75;
+  --color-accent: #e1d4ec;
+  --color-accent-foreground: #321d40;
+  --color-destructive: #b23a3a;
+  --color-destructive-foreground: #ffffff;
+  --color-warning: #d99a1f;
+  --color-warning-foreground: #2b1d00;
+  --color-info: #284267;
+  --color-info-foreground: #ffffff;
+  --color-success: #248060;
+  --color-border: #d3dee1;
+  --color-input: #c3d1d5;
+  --color-ring: #32a980;
 
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
+  --color-sidebar: #172326;
+  --color-sidebar-foreground: #c9dde2;
+  --color-sidebar-muted: #83b2be;
 
-  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* Géométrie : coins généreux, jamais « pill » sur les cartes */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1.125rem;
+  --radius-xl: 1.5rem;
+
+  /* Ombres teintées ardoise (jamais noir pur) */
+  --shadow-xs: 0 1px 2px rgb(23 35 38 / 0.08);
+  --shadow-sm: 0 1px 2px rgb(23 35 38 / 0.06), 0 2px 8px -2px rgb(23 35 38 / 0.1);
+  --shadow-md: 0 2px 4px rgb(23 35 38 / 0.05), 0 12px 24px -8px rgb(23 35 38 / 0.18);
+  --shadow-lg: 0 4px 8px rgb(23 35 38 / 0.06), 0 28px 48px -12px rgb(23 35 38 / 0.32);
+  /* Arête « tactile » des boutons pleins */
+  --shadow-edge: inset 0 -3px 0 rgb(0 0 0 / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.18);
+
+  --font-sans: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --animate-toast-in: toast-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  --animate-pop: pop 0.18s ease-out;
+  --animate-spin-slow: spin 0.9s linear infinite;
+
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+    to { opacity: 1; transform: none; }
+  }
 }
 
 @layer base {
@@ -40,6 +141,7 @@
     font-family: var(--font-sans);
     background-color: var(--color-background);
     color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
   }
 
   body {
@@ -49,9 +151,17 @@
     color: var(--color-foreground);
   }
 
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+
   :focus-visible {
-    outline: 2px solid var(--color-ring);
+    outline: 3px solid color-mix(in srgb, var(--color-ring) 55%, transparent);
     outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
 }
 

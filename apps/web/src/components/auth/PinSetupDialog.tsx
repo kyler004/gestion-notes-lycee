@@ -1,4 +1,4 @@
-import { ShieldCheck } from 'lucide-react';
+import { RiShieldCheckFill } from '@remixicon/react';
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { FieldMessage, Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PinCodeSchema } from '@/lib/auth/pin';
 import { t } from '@/lib/i18n';
@@ -76,8 +76,10 @@ export function PinSetupDialog({
     <Dialog open={open} onOpenChange={(next) => !next && allowDismiss && handleClose()}>
       <DialogContent hideClose={!allowDismiss}>
         <DialogHeader>
-          <div className="mb-1 flex items-center gap-2 text-primary">
-            <ShieldCheck className="h-5 w-5" />
+          <div className="mb-1 flex items-center gap-2.5 text-primary">
+            <span className="grid size-9 place-items-center rounded-sm bg-emerald-50 text-emerald-400">
+              <RiShieldCheckFill className="size-5" />
+            </span>
             <DialogTitle>{t('pin.setupTitle')}</DialogTitle>
           </div>
           <DialogDescription>{t('pin.setupDescription')}</DialogDescription>
@@ -93,10 +95,11 @@ export function PinSetupDialog({
               pattern="\d{4,6}"
               maxLength={6}
               autoComplete="new-password"
+              state={error ? 'error' : 'default'}
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
               placeholder="••••"
-              className="tabular-nums tracking-widest"
+              className="text-base font-extrabold tabular-nums tracking-[0.35em]"
               autoFocus
             />
           </div>
@@ -110,18 +113,15 @@ export function PinSetupDialog({
               pattern="\d{4,6}"
               maxLength={6}
               autoComplete="new-password"
+              state={error ? 'error' : 'default'}
               value={confirmPin}
               onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
               placeholder="••••"
-              className="tabular-nums tracking-widest"
+              className="text-base font-extrabold tabular-nums tracking-[0.35em]"
             />
           </div>
 
-          {error && (
-            <p role="alert" className="text-sm font-medium text-destructive">
-              {error}
-            </p>
-          )}
+          {error && <FieldMessage tone="error">{error}</FieldMessage>}
 
           <DialogFooter>
             {allowDismiss && (
@@ -129,7 +129,7 @@ export function PinSetupDialog({
                 {t('pin.skipPin')}
               </Button>
             )}
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" loading={saving} icon={<RiShieldCheckFill />}>
               {t('pin.savePin')}
             </Button>
           </DialogFooter>

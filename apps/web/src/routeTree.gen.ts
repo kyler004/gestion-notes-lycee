@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as LockRouteImport } from './routes/lock'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
@@ -20,6 +21,11 @@ import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticate
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesignSystemRoute = DesignSystemRouteImport.update({
+  id: '/design-system',
+  path: '/design-system',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LockRoute = LockRouteImport.update({
@@ -60,6 +66,7 @@ const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
+  '/design-system': typeof DesignSystemRoute
   '/lock': typeof LockRoute
   '/login': typeof LoginRoute
   '/admin': typeof AuthenticatedAdminRoute
@@ -68,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/reports': typeof AuthenticatedReportsRoute
 }
 export interface FileRoutesByTo {
+  '/design-system': typeof DesignSystemRoute
   '/lock': typeof LockRoute
   '/login': typeof LoginRoute
   '/admin': typeof AuthenticatedAdminRoute
@@ -79,6 +87,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/design-system': typeof DesignSystemRoute
   '/lock': typeof LockRoute
   '/login': typeof LoginRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
@@ -90,13 +99,28 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/lock' | '/login' | '/admin' | '/forbidden' | '/grades' | '/reports'
+    | '/'
+    | '/design-system'
+    | '/lock'
+    | '/login'
+    | '/admin'
+    | '/forbidden'
+    | '/grades'
+    | '/reports'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/lock' | '/login' | '/admin' | '/forbidden' | '/grades' | '/reports' | '/'
+    | '/design-system'
+    | '/lock'
+    | '/login'
+    | '/admin'
+    | '/forbidden'
+    | '/grades'
+    | '/reports'
+    | '/'
   id:
     | '__root__'
     | '/_authenticated'
+    | '/design-system'
     | '/lock'
     | '/login'
     | '/_authenticated/admin'
@@ -108,6 +132,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  DesignSystemRoute: typeof DesignSystemRoute
   LockRoute: typeof LockRoute
   LoginRoute: typeof LoginRoute
 }
@@ -119,6 +144,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/design-system': {
+      id: '/design-system'
+      path: '/design-system'
+      fullPath: '/design-system'
+      preLoaderRoute: typeof DesignSystemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/lock': {
@@ -195,6 +227,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
+  DesignSystemRoute: DesignSystemRoute,
   LockRoute: LockRoute,
   LoginRoute: LoginRoute,
 }

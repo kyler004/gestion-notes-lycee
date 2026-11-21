@@ -1,3 +1,4 @@
+import { RiBuilding2Fill } from '@remixicon/react';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -7,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/header';
 import { hasRoleAccess } from '@/lib/auth/roles';
 import { t } from '@/lib/i18n';
 import { useSessionStore } from '@/stores/session.store';
@@ -25,12 +27,15 @@ export const Route = createFileRoute('/_authenticated/admin')({
 
 function AdminPlaceholderPage() {
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold tracking-tight">{t('nav.academic')}</h1>
-        <Badge variant="secondary">{t('dashboard.cards.adminPhase')}</Badge>
-      </div>
-      <Card>
+    <div className="space-y-6">
+      <PageHeader
+        tone="violet"
+        icon={<RiBuilding2Fill />}
+        title={t('nav.academic')}
+        subtitle={t('dashboard.cards.adminDesc')}
+        actions={<Badge variant="dark">{t('dashboard.cards.adminPhase')}</Badge>}
+      />
+      <Card variant="elevated">
         <CardHeader>
           <CardTitle>{t('dashboard.cards.adminTitle')}</CardTitle>
           <CardDescription>{t('dashboard.cards.adminDesc')}</CardDescription>
