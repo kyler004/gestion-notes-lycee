@@ -2,18 +2,22 @@ import {
   RiAddCircleFill,
   RiAlertFill,
   RiBookOpenFill,
+  RiCalendarFill,
   RiCheckboxCircleFill,
+  RiCloseCircleFill,
   RiDeleteBin6Fill,
   RiDownload2Fill,
   RiFileTextFill,
   RiGroupFill,
+  RiIdCardFill,
   RiInformationFill,
   RiLockFill,
+  RiLockPasswordFill,
+  RiNumbersFill,
   RiRefreshFill,
   RiSaveFill,
   RiSchoolFill,
-  RiCalendarFill,
-  RiCloseCircleFill,
+  RiUser3Fill,
   RiWifiOffFill,
 } from '@remixicon/react';
 import { createFileRoute } from '@tanstack/react-router';
@@ -24,6 +28,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle, StatCard } from '@/components/ui/card';
 import { Dropdown } from '@/components/ui/dropdown';
 import { PageHeader } from '@/components/ui/header';
+import {
+  FieldMessage,
+  GradeInput,
+  Input,
+  SearchInput,
+  Textarea,
+  TileInput,
+} from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 
 export const Route = createFileRoute('/design-system')({ component: DesignSystemPage });
@@ -51,6 +64,9 @@ const swatches: Array<[string, string[]]> = [
 function DesignSystemPage() {
   const [classe, setClasse] = useState<string | undefined>('3eme-a');
   const [periode, setPeriode] = useState<string | undefined>();
+  const [search, setSearch] = useState('Kamga');
+  const [gradeOk, setGradeOk] = useState('16.5');
+  const [gradeErr, setGradeErr] = useState('23');
   const [loading, setLoading] = useState(false);
 
   return (
@@ -182,6 +198,121 @@ function DesignSystemPage() {
             <CardDescription className="text-slate-100 opacity-100">Titre sur fond ardoise</CardDescription>
           </CardHeader>
           <div className="p-6 text-sm text-muted-foreground">Le contenu de la carte vient ici.</div>
+        </Card>
+      </Section>
+
+      <Section id="champs" title="Champs de saisie">
+        <Card className="space-y-6 p-6">
+          <div className="space-y-2">
+            <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase">
+              Champs « tuile » (h-14, alignés sur le menu déroulant)
+            </p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <TileInput
+                label="Identifiant"
+                icon={<RiUser3Fill />}
+                defaultValue="j.dupont"
+                placeholder="ex. j.dupont"
+              />
+              <TileInput
+                label="Mot de passe"
+                type="password"
+                passwordToggle
+                icon={<RiLockPasswordFill />}
+                defaultValue="Lycee2026!"
+              />
+              <TileInput
+                label="Matricule élève"
+                icon={<RiIdCardFill />}
+                state="success"
+                defaultValue="26LYC-0148"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase">
+              Champs standards & états
+            </p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="ds-standard">Nom complet</Label>
+                <Input
+                  id="ds-standard"
+                  icon={<RiUser3Fill />}
+                  placeholder="ex. Aminatou Bello"
+                />
+                <FieldMessage>Nom tel qu'inscrit au registre.</FieldMessage>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ds-error">Coefficient</Label>
+                <Input
+                  id="ds-error"
+                  icon={<RiNumbersFill />}
+                  state="error"
+                  defaultValue="-2"
+                />
+                <FieldMessage tone="error">Doit être supérieur à 0.</FieldMessage>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ds-disabled" optional>
+                  Établissement
+                </Label>
+                <Input
+                  id="ds-disabled"
+                  icon={<RiSchoolFill />}
+                  defaultValue="Lycée Général Leclerc"
+                  disabled
+                />
+                <FieldMessage tone="success">Verrouillé par l'administration.</FieldMessage>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="ds-search">Recherche d'élève</Label>
+                <SearchInput
+                  id="ds-search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onClear={() => setSearch('')}
+                  placeholder="Nom, prénom ou matricule…"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ds-notes">Saisie rapide sur /20</Label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <GradeInput
+                    id="ds-notes"
+                    aria-label="Note valide"
+                    value={gradeOk}
+                    onChange={(e) => setGradeOk(e.target.value)}
+                    state="success"
+                  />
+                  <GradeInput
+                    aria-label="Note en erreur"
+                    value={gradeErr}
+                    onChange={(e) => setGradeErr(e.target.value)}
+                    state="error"
+                  />
+                  <GradeInput aria-label="Note vide" placeholder="—" />
+                </div>
+                <FieldMessage tone="error">La note ne peut pas dépasser 20.</FieldMessage>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="ds-textarea" optional>
+                Appréciation du conseil de classe
+              </Label>
+              <Textarea
+                id="ds-textarea"
+                defaultValue="Travail sérieux et régulier en mathématiques. Félicitations du conseil."
+              />
+            </div>
+          </div>
         </Card>
       </Section>
 

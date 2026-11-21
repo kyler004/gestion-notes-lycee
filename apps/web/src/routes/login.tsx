@@ -2,12 +2,15 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { LoginSchema } from '@lycee/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import {
+  RiComputerFill,
   RiDeleteBin6Fill,
   RiErrorWarningFill,
   RiKey2Fill,
   RiLockFill,
+  RiLockPasswordFill,
   RiRefreshFill,
   RiShieldCheckFill,
+  RiUser3Fill,
   RiWifiOffFill,
 } from '@remixicon/react';
 import { useEffect, useState } from 'react';
@@ -24,8 +27,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { FieldMessage, TileInput } from '@/components/ui/input';
 import { ApiError, NetworkError } from '@/lib/api/errors';
 import { t } from '@/lib/i18n';
 import { useSessionStore } from '@/stores/session.store';
@@ -233,50 +235,51 @@ function LoginPage() {
           <CardContent>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
               <div className="space-y-1.5">
-                <Label htmlFor="login-username">{t('auth.usernameLabel')}</Label>
-                <Input
+                <TileInput
                   id="login-username"
+                  label={t('auth.usernameLabel')}
+                  icon={<RiUser3Fill />}
                   autoComplete="username"
                   placeholder={t('auth.usernamePlaceholder')}
+                  state={errors.username ? 'error' : 'default'}
                   {...register('username')}
                 />
                 {errors.username && (
-                  <p className="text-xs font-medium text-destructive">
-                    {errors.username.message}
-                  </p>
+                  <FieldMessage tone="error">{errors.username.message}</FieldMessage>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="login-password">{t('auth.passwordLabel')}</Label>
-                <Input
+                <TileInput
                   id="login-password"
+                  label={t('auth.passwordLabel')}
+                  icon={<RiLockPasswordFill />}
                   type="password"
+                  passwordToggle
                   autoComplete="current-password"
                   placeholder={t('auth.passwordPlaceholder')}
+                  state={errors.password ? 'error' : 'default'}
                   {...register('password')}
                 />
                 {errors.password && (
-                  <p className="text-xs font-medium text-destructive">
-                    {errors.password.message}
-                  </p>
+                  <FieldMessage tone="error">{errors.password.message}</FieldMessage>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="login-device">{t('auth.deviceLabel')}</Label>
-                <Input
+                <TileInput
                   id="login-device"
+                  label={t('auth.deviceLabel')}
+                  icon={<RiComputerFill />}
                   placeholder={t('auth.devicePlaceholder')}
+                  state={errors.deviceLabel ? 'error' : 'default'}
                   {...register('deviceLabel', {
                     setValueAs: (value: unknown) =>
                       typeof value === 'string' && value.trim() === '' ? undefined : value,
                   })}
                 />
                 {errors.deviceLabel && (
-                  <p className="text-xs font-medium text-destructive">
-                    {errors.deviceLabel.message}
-                  </p>
+                  <FieldMessage tone="error">{errors.deviceLabel.message}</FieldMessage>
                 )}
               </div>
 
@@ -285,9 +288,12 @@ function LoginPage() {
                   role="alert"
                   className="flex items-start gap-2.5 rounded-md bg-brick-50 px-3.5 py-3 text-sm font-semibold text-brick-500"
                 >
-                  {rateLimitSeconds > 0
-                    ? t('auth.rateLimited', { seconds: rateLimitSeconds })
-                    : submitError}
+                  <RiErrorWarningFill className="mt-0.5 size-5 shrink-0" aria-hidden />
+                  <span>
+                    {rateLimitSeconds > 0
+                      ? t('auth.rateLimited', { seconds: rateLimitSeconds })
+                      : submitError}
+                  </span>
                 </div>
               )}
 

@@ -1,5 +1,5 @@
+import { RiGroupFill, RiKey2Fill, RiLockFill } from '@remixicon/react';
 import { createFileRoute, redirect } from '@tanstack/react-router';
-import { RiLockFill, RiGroupFill } from '@remixicon/react';
 import { useState, type FormEvent } from 'react';
 import { Brand } from '@/components/layout/Brand';
 import { NetworkBadge } from '@/components/layout/NetworkBadge';
@@ -12,7 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { FieldMessage, Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PinCodeSchema } from '@/lib/auth/pin';
 import { t } from '@/lib/i18n';
@@ -101,18 +101,21 @@ function LockScreenPage() {
                   pattern="\d{4,6}"
                   maxLength={6}
                   autoComplete="one-time-code"
+                  size="lg"
+                  icon={<RiKey2Fill />}
+                  state={error ? 'error' : 'default'}
                   value={pin}
                   onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
                   placeholder="••••"
-                  className="h-14 text-center text-2xl font-extrabold tabular-nums tracking-[0.5em]"
+                  className="pr-9 text-center text-2xl font-extrabold tabular-nums tracking-[0.5em]"
                   autoFocus
                 />
               </div>
 
               {error && (
-                <p role="alert" className="text-center text-sm font-medium text-destructive">
+                <FieldMessage tone="error" className="justify-center">
                   {error}
-                </p>
+                </FieldMessage>
               )}
 
               <Button type="submit" size="lg" className="w-full" loading={submitting} icon={<RiLockFill />}>
