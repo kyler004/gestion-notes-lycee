@@ -1,5 +1,5 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
+import { RiCloseFill } from '@remixicon/react';
 import type { ComponentPropsWithoutRef, HTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -15,7 +15,7 @@ export function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       className={cn(
-        'fixed inset-0 z-50 bg-black/45 backdrop-blur-[1px] transition-opacity',
+        'fixed inset-0 z-50 bg-slate-600/60 backdrop-blur-sm transition-opacity',
         className,
       )}
       {...props}
@@ -34,7 +34,7 @@ export function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border border-border bg-card p-6 shadow-lg',
+          'fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border bg-card p-7 shadow-lg animate-pop',
           className,
         )}
         {...props}
@@ -43,9 +43,9 @@ export function DialogContent({
         {!hideClose && (
           <DialogPrimitive.Close
             aria-label="Fermer"
-            className="absolute top-4 right-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none"
+            className="absolute top-4 right-4 grid size-8 cursor-pointer place-items-center rounded-sm bg-muted text-slate-400 transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none"
           >
-            <X className="h-4 w-4" />
+            <RiCloseFill className="size-5" />
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>
@@ -72,7 +72,7 @@ export function DialogTitle({
 }: ComponentPropsWithoutRef<typeof DialogPrimitive.Title>) {
   return (
     <DialogPrimitive.Title
-      className={cn('text-lg font-semibold leading-none tracking-tight', className)}
+      className={cn('text-xl font-extrabold leading-none tracking-tight', className)}
       {...props}
     />
   );

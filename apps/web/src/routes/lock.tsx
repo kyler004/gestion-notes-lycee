@@ -1,6 +1,7 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
-import { Lock, Users } from 'lucide-react';
+import { RiLockFill, RiGroupFill } from '@remixicon/react';
 import { useState, type FormEvent } from 'react';
+import { Brand } from '@/components/layout/Brand';
 import { NetworkBadge } from '@/components/layout/NetworkBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -63,25 +64,27 @@ function LockScreenPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col justify-center bg-background px-4 py-10">
-      <div className="mx-auto w-full max-w-sm space-y-5">
+    <div className="relative flex min-h-screen flex-col justify-center overflow-hidden bg-slate-600 px-4 py-10">
+      <span aria-hidden className="absolute -top-24 -left-24 size-96 rounded-full bg-emerald-300/25" />
+      <span aria-hidden className="absolute -right-24 -bottom-24 size-96 rounded-full bg-violet-400/35" />
+      <div className="relative mx-auto w-full max-w-sm space-y-5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-primary">
-            <Lock className="h-5 w-5" />
-            <span className="text-sm font-semibold">{t('app.name')}</span>
-          </div>
+          <Brand tone="light" />
           <NetworkBadge />
         </div>
 
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle>{t('pin.lockTitle')}</CardTitle>
+        <Card variant="elevated" className="rounded-xl">
+          <CardHeader className="items-center text-center">
+            <span className="mb-1 grid size-16 place-items-center rounded-lg bg-violet-50 text-violet-400">
+              <RiLockFill className="size-8" />
+            </span>
+            <CardTitle className="text-2xl">{t('pin.lockTitle')}</CardTitle>
             <CardDescription>{t('pin.lockSubtitle')}</CardDescription>
             {user && (
               <div className="pt-3">
-                <p className="text-base font-semibold text-foreground">{user.fullName}</p>
-                <div className="mt-1 flex justify-center">
-                  <Badge variant="secondary">{t(`roles.${user.role}`)}</Badge>
+                <p className="text-base font-extrabold text-foreground">{user.fullName}</p>
+                <div className="mt-1.5 flex justify-center">
+                  <Badge variant="accent">{t(`roles.${user.role}`)}</Badge>
                 </div>
               </div>
             )}
@@ -101,7 +104,7 @@ function LockScreenPage() {
                   value={pin}
                   onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
                   placeholder="••••"
-                  className="text-center text-lg tabular-nums tracking-[0.4em]"
+                  className="h-14 text-center text-2xl font-extrabold tabular-nums tracking-[0.5em]"
                   autoFocus
                 />
               </div>
@@ -112,7 +115,7 @@ function LockScreenPage() {
                 </p>
               )}
 
-              <Button type="submit" className="w-full" disabled={submitting}>
+              <Button type="submit" size="lg" className="w-full" loading={submitting} icon={<RiLockFill />}>
                 {t('pin.unlockButton')}
               </Button>
             </form>
@@ -125,7 +128,7 @@ function LockScreenPage() {
                 className="w-full"
                 onClick={() => void switchUser()}
               >
-                <Users className="h-3.5 w-3.5" />
+                <RiGroupFill  />
                 {t('nav.switchUser')}
               </Button>
               <button

@@ -1,20 +1,21 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
-  BookOpenCheck,
-  Building2,
-  FileText,
-  GraduationCap,
-  KeyRound,
-  LayoutDashboard,
-  Lock,
-  LogOut,
-  Menu,
-  Users,
-  X,
-} from 'lucide-react';
+  RiBookOpenFill,
+  RiBuilding2Fill,
+  RiFileTextFill,
+  
+  RiKey2Fill,
+  RiLayoutGridFill,
+  RiLockFill,
+  RiLogoutBoxRFill,
+  RiMenuFill,
+  RiGroupFill,
+  RiCloseFill,
+} from '@remixicon/react';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { PinSetupDialog } from '@/components/auth/PinSetupDialog';
+import { Brand, BrandMark, initials } from '@/components/layout/Brand';
 import { NetworkBadge } from '@/components/layout/NetworkBadge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,13 +27,13 @@ import { useSessionStore } from '@/stores/session.store';
 function getNavIcon(to: NavItemConfig['to']) {
   switch (to) {
     case '/':
-      return LayoutDashboard;
+      return RiLayoutGridFill;
     case '/grades':
-      return BookOpenCheck;
+      return RiBookOpenFill;
     case '/admin':
-      return Building2;
+      return RiBuilding2Fill;
     case '/reports':
-      return FileText;
+      return RiFileTextFill;
   }
 }
 
@@ -68,11 +69,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   const navContent = (
-    <nav aria-label="Navigation principale" className="flex flex-1 flex-col gap-1 p-3">
+    <nav aria-label="Navigation principale" className="flex flex-1 flex-col gap-1.5 px-4 py-3">
       {visibleNavItems.map((item) => {
         const Icon = getNavIcon(item.to);
-        const isActive =
-          item.to === '/' ? pathname === '/' : pathname.startsWith(item.to);
+        const isActive = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to);
 
         return (
           <Link
@@ -80,23 +80,21 @@ export function AppShell({ children }: { children: ReactNode }) {
             to={item.to}
             onClick={() => setMobileMenuOpen(false)}
             className={cn(
-              'flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
+              'flex items-center justify-between rounded-md px-3 py-3 text-sm font-bold transition-all',
               isActive
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'text-foreground/80 hover:bg-accent hover:text-accent-foreground',
+                ? 'bg-emerald-50 text-slate-600 shadow-edge'
+                : 'text-sidebar-foreground hover:bg-white/10 hover:text-white',
             )}
           >
-            <span className="flex items-center gap-2.5">
-              <Icon className="h-4 w-4 shrink-0" />
+            <span className="flex items-center gap-3">
+              <Icon className={cn('size-5 shrink-0', isActive ? 'text-emerald-300' : 'text-slate-200')} />
               <span>{t(item.labelKey)}</span>
             </span>
             {item.milestoneTag && (
               <span
                 className={cn(
-                  'rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                  isActive
-                    ? 'bg-primary-foreground/15 text-primary-foreground'
-                    : 'bg-muted text-muted-foreground',
+                  'shrink-0 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[10px] font-extrabold',
+                  isActive ? 'bg-slate-600/10 text-slate-500' : 'bg-white/10 text-slate-100',
                 )}
               >
                 {item.milestoneTag}
@@ -108,174 +106,125 @@ export function AppShell({ children }: { children: ReactNode }) {
     </nav>
   );
 
+  const sidebarBody = (
+    <>
+      <div className="p-5 pb-3">
+        <Brand tone="light" />
+      </div>
+      {navContent}
+      <div className="space-y-3 p-4">
+        {hasPin ? (
+          <button
+            type="button"
+            onClick={() => {
+              setMobileMenuOpen(false);
+              setManualPinDialogOpen(true);
+            }}
+            className="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2.5 text-left text-sm font-semibold text-sidebar-foreground transition-colors hover:bg-white/10"
+          >
+            <RiKey2Fill className="size-5 text-slate-200" />
+            <span>{t('nav.changePin')}</span>
+          </button>
+        ) : (
+          <Badge variant="warning" className="w-full justify-center py-2">
+            Code PIN non configuré
+          </Badge>
+        )}
+        {user && (
+          <div className="flex items-center gap-3 rounded-lg bg-white/7 p-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-md bg-violet-100 text-sm font-extrabold text-violet-500">
+              {initials(user.fullName)}
+            </span>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-sm font-bold text-white">{user.fullName}</p>
+              <p className="truncate text-xs text-slate-100">{t(`roles.${user.role}`)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur-xs">
-        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4">
-          <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="lg:hidden"
-              aria-label="Ouvrir le menu"
-              onClick={() => setMobileMenuOpen((v) => !v)}
-            >
-              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </Button>
+    <div className="flex min-h-screen bg-background">
+      {/* Barre latérale bureau */}
+      <aside
+        className="sticky top-0 hidden h-screen w-68 shrink-0 flex-col bg-sidebar lg:flex"
+        aria-label="Barre latérale"
+      >
+        {sidebarBody}
+      </aside>
 
-            <Link to="/" className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                <GraduationCap className="h-5 w-5" />
-              </div>
-              <div className="leading-tight">
-                <span className="block text-sm font-semibold tracking-tight text-foreground">
-                  {t('app.name')}
-                </span>
-                <span className="hidden text-xs text-muted-foreground sm:block">
-                  {t('app.subtitle')}
-                </span>
-              </div>
-            </Link>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <NetworkBadge />
-
-            {user && (
-              <div className="hidden items-center gap-2 border-l border-border pl-3 md:flex">
-                <div className="text-right leading-tight">
-                  <p className="text-sm font-medium text-foreground">{user.fullName}</p>
-                  <p className="text-xs text-muted-foreground">{t(`roles.${user.role}`)}</p>
-                </div>
-              </div>
-            )}
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleLock}
-              title={hasPin ? t('nav.lockScreen') : t('nav.setupPin')}
-            >
-              {hasPin ? <Lock className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">
-                {hasPin ? t('nav.lockScreen') : t('nav.setupPin')}
-              </span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void switchUser()}
-              title={t('nav.switchUser')}
-            >
-              <Users className="h-3.5 w-3.5" />
-              <span className="hidden xl:inline">{t('nav.switchUser')}</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void handleLogout()}
-              title={t('nav.logout')}
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{t('nav.logout')}</span>
-            </Button>
-          </div>
+      {/* Tiroir mobile */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-40 flex lg:hidden">
+          <div className="fixed inset-0 bg-slate-600/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)} />
+          <aside className="relative z-10 flex w-72 flex-col bg-sidebar shadow-lg">{sidebarBody}</aside>
         </div>
+      )}
 
-        {!isOnline && (
-          <div className="border-t border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs font-medium text-amber-900">
-            {t('app.offlineBanner')}
-          </div>
-        )}
-      </header>
-
-      <div className="mx-auto flex w-full max-w-7xl flex-1">
-        {/* Barre latérale bureau */}
-        <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-card/60 lg:flex">
-          {navContent}
-          <div className="border-t border-border p-3 text-xs text-muted-foreground">
-            {hasPin ? (
-              <button
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md">
+          <div className="flex h-16 items-center justify-between gap-3 px-4 sm:px-8">
+            <div className="flex items-center gap-3">
+              <Button
                 type="button"
-                onClick={() => setManualPinDialogOpen(true)}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+                variant="ghost"
+                size="icon"
+                className="lg:hidden"
+                aria-label="Ouvrir le menu"
+                onClick={() => setMobileMenuOpen((v) => !v)}
               >
-                <KeyRound className="h-3.5 w-3.5" />
-                <span>{t('nav.changePin')}</span>
-              </button>
-            ) : (
-              <Badge variant="warning" className="w-full justify-center">
-                Code PIN non configuré
-              </Badge>
-            )}
-          </div>
-        </aside>
+                {mobileMenuOpen ? <RiCloseFill className="size-6" /> : <RiMenuFill className="size-6" />}
+              </Button>
+              <Link to="/" className="lg:hidden">
+                <BrandMark className="size-9" />
+              </Link>
+            </div>
 
-        {/* Tiroir mobile */}
-        {mobileMenuOpen && (
-          <div className="fixed inset-0 z-40 flex lg:hidden">
-            <div
-              className="fixed inset-0 bg-black/40"
-              onClick={() => setMobileMenuOpen(false)}
-            />
-            <aside className="relative z-10 flex w-64 flex-col bg-card shadow-xl">
-              <div className="flex items-center justify-between border-b border-border p-4">
-                <div>
-                  <p className="text-sm font-semibold">{user?.fullName}</p>
-                  {user && (
-                    <p className="text-xs text-muted-foreground">{t(`roles.${user.role}`)}</p>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setMobileMenuOpen(false)}
-                  aria-label="Fermer le menu"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              {navContent}
-              <div className="space-y-2 border-t border-border p-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    setManualPinDialogOpen(true);
-                  }}
-                >
-                  <KeyRound className="h-4 w-4" />
-                  <span>{hasPin ? t('nav.changePin') : t('nav.setupPin')}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    void switchUser();
-                  }}
-                >
-                  <Users className="h-4 w-4" />
-                  <span>{t('nav.switchUser')}</span>
-                </Button>
-              </div>
-            </aside>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <NetworkBadge />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleLock}
+                title={hasPin ? t('nav.lockScreen') : t('nav.setupPin')}
+              >
+                {hasPin ? <RiLockFill /> : <RiKey2Fill />}
+                <span className="hidden sm:inline">{hasPin ? t('nav.lockScreen') : t('nav.setupPin')}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void switchUser()}
+                title={t('nav.switchUser')}
+              >
+                <RiGroupFill />
+                <span className="hidden xl:inline">{t('nav.switchUser')}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleLogout()}
+                title={t('nav.logout')}
+              >
+                <RiLogoutBoxRFill />
+                <span className="hidden sm:inline">{t('nav.logout')}</span>
+              </Button>
+            </div>
           </div>
-        )}
 
-        <main className="flex-1 p-4 sm:p-6">{children}</main>
+          {!isOnline && (
+            <div className="bg-amber-50 px-4 py-2 text-center text-xs font-bold text-amber-500">
+              {t('app.offlineBanner')}
+            </div>
+          )}
+        </header>
+
+        <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-8">{children}</main>
       </div>
 
       <PinSetupDialog

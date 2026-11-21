@@ -1,4 +1,4 @@
-import { ShieldCheck } from 'lucide-react';
+import { RiShieldCheckFill } from '@remixicon/react';
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -77,7 +77,7 @@ export function PinSetupDialog({
       <DialogContent hideClose={!allowDismiss}>
         <DialogHeader>
           <div className="mb-1 flex items-center gap-2 text-primary">
-            <ShieldCheck className="h-5 w-5" />
+            <RiShieldCheckFill className="h-5 w-5" />
             <DialogTitle>{t('pin.setupTitle')}</DialogTitle>
           </div>
           <DialogDescription>{t('pin.setupDescription')}</DialogDescription>

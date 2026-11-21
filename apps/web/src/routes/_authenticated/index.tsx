@@ -1,15 +1,11 @@
+import { RiBookOpenFill, RiBuilding2Fill, RiFileTextFill, RiRocket2Fill, RiArrowRightLine } from '@remixicon/react';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { BookOpenCheck, Building2, CheckCircle2, FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Card, CardDescription, CardTitle } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/header';
 import { hasRoleAccess } from '@/lib/auth/roles';
 import { t } from '@/lib/i18n';
+import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session.store';
 
 export const Route = createFileRoute('/_authenticated/')({
@@ -20,90 +16,80 @@ function DashboardPage() {
   const user = useSessionStore((s) => s.user);
   const role = user?.role;
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            {t('dashboard.welcome', { name: user?.fullName ?? '' })}
-          </h1>
-          {role && (
-            <p className="text-sm text-muted-foreground">
-              {t('dashboard.roleSummary', { role: t(`roles.${role}`) })}
-            </p>
-          )}
-        </div>
-        {role && <Badge variant="outline">{t(`roles.${role}`)}</Badge>}
-      </div>
+  const modules = [
+    {
+      to: '/grades' as const,
+      allowed: ['teacher', 'admin', 'censor'] as const,
+      icon: <RiBookOpenFill />,
+      tone: 'bg-emerald-50 text-emerald-400',
+      phase: t('dashboard.cards.gradesPhase'),
+      title: t('dashboard.cards.gradesTitle'),
+      desc: t('dashboard.cards.gradesDesc'),
+    },
+    {
+      to: '/admin' as const,
+      allowed: ['admin', 'censor'] as const,
+      icon: <RiBuilding2Fill />,
+      tone: 'bg-violet-50 text-violet-400',
+      phase: t('dashboard.cards.adminPhase'),
+      title: t('dashboard.cards.adminTitle'),
+      desc: t('dashboard.cards.adminDesc'),
+    },
+    {
+      to: '/reports' as const,
+      allowed: ['admin', 'censor', 'principal', 'secretary'] as const,
+      icon: <RiFileTextFill />,
+      tone: 'bg-blue-100 text-blue-500',
+      phase: t('dashboard.cards.reportsPhase'),
+      title: t('dashboard.cards.reportsTitle'),
+      desc: t('dashboard.cards.reportsDesc'),
+    },
+  ].filter((m) => hasRoleAccess(role, [...m.allowed]));
 
-      <Card className="border-primary/20 bg-primary/5">
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2 text-primary">
-            <CheckCircle2 className="h-5 w-5" />
-            <CardTitle className="text-base">{t('dashboard.milestoneNoticeTitle')}</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-foreground/85">{t('dashboard.milestoneNoticeBody')}</p>
-        </CardContent>
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        tone="emerald"
+        title={t('dashboard.welcome', { name: user?.fullName ?? '' })}
+        subtitle={role ? t('dashboard.roleSummary', { role: t(`roles.${role}`) }) : undefined}
+        actions={role && <Badge variant="dark">{t(`roles.${role}`)}</Badge>}
+      />
+
+      <Card variant="dark" className="flex items-start gap-4 p-5">
+        <span className="grid size-11 shrink-0 place-items-center rounded-md bg-emerald-100/20 text-emerald-50">
+          <RiRocket2Fill className="size-6" />
+        </span>
+        <div>
+          <CardTitle className="text-base text-white">{t('dashboard.milestoneNoticeTitle')}</CardTitle>
+          <p className="mt-1 text-sm text-slate-100">{t('dashboard.milestoneNoticeBody')}</p>
+        </div>
       </Card>
 
-      <section aria-labelledby="modules-heading" className="space-y-3">
-        <h2 id="modules-heading" className="text-base font-semibold text-foreground">
+      <section aria-labelledby="modules-heading" className="space-y-4">
+        <h2 id="modules-heading" className="text-lg font-extrabold">
           {t('dashboard.nextStepsTitle')}
         </h2>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {hasRoleAccess(role, ['teacher', 'admin', 'censor']) && (
-            <Link to="/grades" className="group block">
-              <Card className="h-full transition-colors group-hover:border-primary/40">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <BookOpenCheck className="h-5 w-5 text-primary" />
-                    <Badge variant="secondary">{t('dashboard.cards.gradesPhase')}</Badge>
-                  </div>
-                  <CardTitle className="pt-2 text-base">
-                    {t('dashboard.cards.gradesTitle')}
-                  </CardTitle>
-                  <CardDescription>{t('dashboard.cards.gradesDesc')}</CardDescription>
-                </CardHeader>
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {modules.map((m) => (
+            <Link key={m.to} to={m.to} className="group block rounded-lg">
+              <Card variant="interactive" className="flex h-full flex-col gap-4 p-6">
+                <div className="flex items-center justify-between">
+                  <span className={cn('grid size-12 place-items-center rounded-md [&_svg]:size-6', m.tone)}>
+                    {m.icon}
+                  </span>
+                  <Badge variant="neutral">{m.phase}</Badge>
+                </div>
+                <div className="flex-1">
+                  <CardTitle className="text-base">{m.title}</CardTitle>
+                  <CardDescription className="mt-1 text-muted-foreground opacity-100">
+                    {m.desc}
+                  </CardDescription>
+                </div>
+                <RiArrowRightLine className="size-5 text-slate-200 transition-all group-hover:translate-x-1 group-hover:text-primary" />
               </Card>
             </Link>
-          )}
-
-          {hasRoleAccess(role, ['admin', 'censor']) && (
-            <Link to="/admin" className="group block">
-              <Card className="h-full transition-colors group-hover:border-primary/40">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <Building2 className="h-5 w-5 text-primary" />
-                    <Badge variant="secondary">{t('dashboard.cards.adminPhase')}</Badge>
-                  </div>
-                  <CardTitle className="pt-2 text-base">
-                    {t('dashboard.cards.adminTitle')}
-                  </CardTitle>
-                  <CardDescription>{t('dashboard.cards.adminDesc')}</CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-          )}
-
-          {hasRoleAccess(role, ['admin', 'censor', 'principal', 'secretary']) && (
-            <Link to="/reports" className="group block">
-              <Card className="h-full transition-colors group-hover:border-primary/40">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <FileText className="h-5 w-5 text-primary" />
-                    <Badge variant="secondary">{t('dashboard.cards.reportsPhase')}</Badge>
-                  </div>
-                  <CardTitle className="pt-2 text-base">
-                    {t('dashboard.cards.reportsTitle')}
-                  </CardTitle>
-                  <CardDescription>{t('dashboard.cards.reportsDesc')}</CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-          )}
+          ))}
         </div>
       </section>
     </div>
