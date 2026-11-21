@@ -18,7 +18,6 @@ export const NAV_ITEMS: readonly NavItemConfig[] = [
     to: '/grades',
     labelKey: 'nav.grades',
     allowedRoles: ['teacher', 'admin', 'censor'],
-    milestoneTag: 'Jalon 2',
   },
   {
     to: '/admin',

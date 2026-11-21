@@ -11,6 +11,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { IDLE_LOCK_TIMEOUT_MS } from '@/lib/auth/pin';
 import { queryClient } from '@/lib/query-client';
 import { useSessionStore } from '@/stores/session.store';
+import { initSyncLifecycle } from '@/stores/sync.store';
 
 let bootstrapPromise: Promise<void> | null = null;
 
@@ -96,6 +97,8 @@ function SessionLifecycleEffects() {
 }
 
 function RootComponent() {
+  useEffect(() => initSyncLifecycle(), []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <SessionLifecycleEffects />

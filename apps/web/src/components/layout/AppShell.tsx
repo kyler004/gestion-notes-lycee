@@ -1,28 +1,40 @@
-import { Link, useRouterState } from '@tanstack/react-router';
 import {
   RiBookOpenFill,
   RiBuilding2Fill,
+  RiCloseFill,
+  RiErrorWarningFill,
   RiFileTextFill,
-  
+  RiGroupFill,
   RiKey2Fill,
   RiLayoutGridFill,
   RiLockFill,
   RiLogoutBoxRFill,
   RiMenuFill,
-  RiGroupFill,
-  RiCloseFill,
+  RiRefreshFill,
 } from '@remixicon/react';
+import { Link, useRouterState } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { PinSetupDialog } from '@/components/auth/PinSetupDialog';
 import { Brand, BrandMark, initials } from '@/components/layout/Brand';
 import { NetworkBadge } from '@/components/layout/NetworkBadge';
+import { OutboxDialog } from '@/components/sync/OutboxDialog';
+import { SyncStatusWidget } from '@/components/sync/SyncStatusWidget';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { hasRoleAccess, NAV_ITEMS, type NavItemConfig } from '@/lib/auth/roles';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session.store';
+import { countUnsyncedOutboxForUser, useSyncStore } from '@/stores/sync.store';
 
 function getNavIcon(to: NavItemConfig['to']) {
   switch (to) {
@@ -45,9 +57,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const lock = useSessionStore((s) => s.lock);
   const switchUser = useSessionStore((s) => s.switchUser);
   const logout = useSessionStore((s) => s.logout);
+  const triggerSync = useSyncStore((s) => s.triggerSync);
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [manualPinDialogOpen, setManualPinDialogOpen] = useState(false);
+  const [logoutWarningCount, setLogoutWarningCount] = useState<number>(0);
+  const [syncingBeforeLogout, setSyncingBeforeLogout] = useState(false);
 
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
@@ -63,7 +78,36 @@ export function AppShell({ children }: { children: ReactNode }) {
     lock();
   };
 
-  const handleLogout = async () => {
+  const handleLogoutClick = async () => {
+    const unsyncedCount = await countUnsyncedOutboxForUser(user?.id);
+    if (unsyncedCount > 0) {
+      setLogoutWarningCount(unsyncedCount);
+      return;
+    }
+    await logout();
+    toast.success(t('auth.logoutSuccess'));
+  };
+
+  const handleSyncAndLogout = async () => {
+    setSyncingBeforeLogout(true);
+    try {
+      const summary = await triggerSync();
+      const remaining = await countUnsyncedOutboxForUser(user?.id);
+      if (!summary || remaining > 0) {
+        setLogoutWarningCount(remaining);
+        toast.warning(t('sync.syncPartialFailure', { count: remaining }));
+        return;
+      }
+      setLogoutWarningCount(0);
+      await logout();
+      toast.success(t('auth.logoutSuccess'));
+    } finally {
+      setSyncingBeforeLogout(false);
+    }
+  };
+
+  const handleForceLogout = async () => {
+    setLogoutWarningCount(0);
     await logout();
     toast.success(t('auth.logoutSuccess'));
   };
@@ -183,6 +227,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
 
             <div className="flex items-center gap-1.5 sm:gap-2">
+              <SyncStatusWidget />
               <NetworkBadge />
               <Button
                 type="button"
@@ -208,7 +253,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => void handleLogout()}
+                onClick={() => void handleLogoutClick()}
                 title={t('nav.logout')}
               >
                 <RiLogoutBoxRFill />
@@ -232,6 +277,51 @@ export function AppShell({ children }: { children: ReactNode }) {
         onOpenChange={(open) => setManualPinDialogOpen(open)}
         allowDismiss
       />
+      <OutboxDialog />
+
+      <Dialog
+        open={logoutWarningCount > 0}
+        onOpenChange={(open) => {
+          if (!open) setLogoutWarningCount(0);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <div className="mb-1 flex items-center gap-2.5 text-amber-500">
+              <span className="grid size-9 place-items-center rounded-sm bg-amber-50 text-amber-500">
+                <RiErrorWarningFill className="size-5" />
+              </span>
+              <DialogTitle>{t('auth.logoutPendingTitle')}</DialogTitle>
+            </div>
+            <DialogDescription>
+              {t('auth.logoutPendingBody', { count: logoutWarningCount })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setLogoutWarningCount(0)}>
+              {t('auth.logoutCancel')}
+            </Button>
+            {isOnline && (
+              <Button
+                type="button"
+                variant="default"
+                icon={<RiRefreshFill />}
+                loading={syncingBeforeLogout}
+                onClick={() => void handleSyncAndLogout()}
+              >
+                {t('auth.logoutSyncAndExit')}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleForceLogout()}
+            >
+              {t('auth.logoutConfirmForce')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
