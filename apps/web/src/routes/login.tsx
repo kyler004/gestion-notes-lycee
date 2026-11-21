@@ -2,15 +2,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { LoginSchema } from '@lycee/shared';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import {
-  RiComputerFill,
   RiDeleteBin6Fill,
   RiErrorWarningFill,
   RiKey2Fill,
   RiLockFill,
-  RiLockPasswordFill,
   RiRefreshFill,
   RiShieldCheckFill,
-  RiUser3Fill,
   RiWifiOffFill,
 } from '@remixicon/react';
 import { useEffect, useState } from 'react';
@@ -27,7 +24,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { FieldMessage, TileInput } from '@/components/ui/input';
+import { FieldMessage, Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ApiError, NetworkError } from '@/lib/api/errors';
 import { t } from '@/lib/i18n';
 import { useSessionStore } from '@/stores/session.store';
@@ -235,10 +233,9 @@ function LoginPage() {
           <CardContent>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
               <div className="space-y-1.5">
-                <TileInput
+                <Label htmlFor="login-username">{t('auth.usernameLabel')}</Label>
+                <Input
                   id="login-username"
-                  label={t('auth.usernameLabel')}
-                  icon={<RiUser3Fill />}
                   autoComplete="username"
                   placeholder={t('auth.usernamePlaceholder')}
                   state={errors.username ? 'error' : 'default'}
@@ -250,10 +247,9 @@ function LoginPage() {
               </div>
 
               <div className="space-y-1.5">
-                <TileInput
+                <Label htmlFor="login-password">{t('auth.passwordLabel')}</Label>
+                <Input
                   id="login-password"
-                  label={t('auth.passwordLabel')}
-                  icon={<RiLockPasswordFill />}
                   type="password"
                   passwordToggle
                   autoComplete="current-password"
@@ -267,10 +263,9 @@ function LoginPage() {
               </div>
 
               <div className="space-y-1.5">
-                <TileInput
+                <Label htmlFor="login-device">{t('auth.deviceLabel')}</Label>
+                <Input
                   id="login-device"
-                  label={t('auth.deviceLabel')}
-                  icon={<RiComputerFill />}
                   placeholder={t('auth.devicePlaceholder')}
                   state={errors.deviceLabel ? 'error' : 'default'}
                   {...register('deviceLabel', {

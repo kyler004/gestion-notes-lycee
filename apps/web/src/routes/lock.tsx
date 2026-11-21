@@ -1,4 +1,4 @@
-import { RiGroupFill, RiKey2Fill, RiLockFill } from '@remixicon/react';
+import { RiGroupFill, RiLockFill } from '@remixicon/react';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { Brand } from '@/components/layout/Brand';
@@ -102,12 +102,11 @@ function LockScreenPage() {
                   maxLength={6}
                   autoComplete="one-time-code"
                   size="lg"
-                  icon={<RiKey2Fill />}
                   state={error ? 'error' : 'default'}
                   value={pin}
                   onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
                   placeholder="••••"
-                  className="pr-9 text-center text-2xl font-extrabold tabular-nums tracking-[0.5em]"
+                  className="text-center text-2xl font-extrabold tabular-nums tracking-[0.5em]"
                   autoFocus
                 />
               </div>

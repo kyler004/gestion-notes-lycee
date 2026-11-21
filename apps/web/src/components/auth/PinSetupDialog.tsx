@@ -1,4 +1,4 @@
-import { RiKey2Fill, RiShieldCheckFill } from '@remixicon/react';
+import { RiShieldCheckFill } from '@remixicon/react';
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -95,7 +95,6 @@ export function PinSetupDialog({
               pattern="\d{4,6}"
               maxLength={6}
               autoComplete="new-password"
-              icon={<RiKey2Fill />}
               state={error ? 'error' : 'default'}
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
@@ -114,7 +113,6 @@ export function PinSetupDialog({
               pattern="\d{4,6}"
               maxLength={6}
               autoComplete="new-password"
-              icon={<RiShieldCheckFill />}
               state={error ? 'error' : 'default'}
               value={confirmPin}
               onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}

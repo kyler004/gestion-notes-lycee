@@ -9,15 +9,11 @@ import {
   RiDownload2Fill,
   RiFileTextFill,
   RiGroupFill,
-  RiIdCardFill,
   RiInformationFill,
   RiLockFill,
-  RiLockPasswordFill,
-  RiNumbersFill,
   RiRefreshFill,
   RiSaveFill,
   RiSchoolFill,
-  RiUser3Fill,
   RiWifiOffFill,
 } from '@remixicon/react';
 import { createFileRoute } from '@tanstack/react-router';
@@ -34,7 +30,6 @@ import {
   Input,
   SearchInput,
   Textarea,
-  TileInput,
 } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
@@ -203,104 +198,97 @@ function DesignSystemPage() {
 
       <Section id="champs" title="Champs de saisie">
         <Card className="space-y-6 p-6">
-          <div className="space-y-2">
-            <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase">
-              Champs « tuile » (h-14, alignés sur le menu déroulant)
-            </p>
-            <div className="grid gap-4 md:grid-cols-3">
-              <TileInput
-                label="Identifiant"
-                icon={<RiUser3Fill />}
-                defaultValue="j.dupont"
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="ds-standard">Identifiant établissement</Label>
+              <Input
+                id="ds-standard"
+                defaultValue="claire.moreau@lycee.cm"
                 placeholder="ex. j.dupont"
               />
-              <TileInput
-                label="Mot de passe"
+            </div>
+
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="ds-password"
+                trailing={
+                  <span className="text-xs font-semibold text-primary">Mot de passe oublié</span>
+                }
+              >
+                Mot de passe
+              </Label>
+              <Input
+                id="ds-password"
                 type="password"
                 passwordToggle
-                icon={<RiLockPasswordFill />}
                 defaultValue="Lycee2026!"
               />
-              <TileInput
-                label="Matricule élève"
-                icon={<RiIdCardFill />}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="ds-valid">Matricule élève</Label>
+              <Input
+                id="ds-valid"
                 state="success"
                 defaultValue="26LYC-0148"
               />
+              <FieldMessage tone="success">Matricule vérifié dans le registre.</FieldMessage>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="ds-error">Coefficient</Label>
+              <Input
+                id="ds-error"
+                state="error"
+                defaultValue="-2"
+              />
+              <FieldMessage tone="error">Doit être supérieur à 0.</FieldMessage>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="ds-search">Recherche d'élève</Label>
+              <SearchInput
+                id="ds-search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onClear={() => setSearch('')}
+                placeholder="Nom, prénom ou matricule…"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="ds-disabled" optional>
+                Établissement
+              </Label>
+              <Input
+                id="ds-disabled"
+                defaultValue="Lycée Général Leclerc"
+                disabled
+              />
+              <FieldMessage>Verrouillé par l'administration.</FieldMessage>
             </div>
           </div>
 
-          <div className="space-y-2">
-            <p className="text-xs font-bold tracking-wider text-muted-foreground uppercase">
-              Champs standards & états
-            </p>
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="ds-standard">Nom complet</Label>
-                <Input
-                  id="ds-standard"
-                  icon={<RiUser3Fill />}
-                  placeholder="ex. Aminatou Bello"
+          <div className="grid gap-5 md:grid-cols-[1.1fr_1fr]">
+            <div className="space-y-1.5">
+              <Label htmlFor="ds-notes">Saisie rapide sur /20</Label>
+              <div className="flex flex-wrap items-center gap-3">
+                <GradeInput
+                  id="ds-notes"
+                  aria-label="Note valide"
+                  value={gradeOk}
+                  onChange={(e) => setGradeOk(e.target.value)}
+                  state="success"
                 />
-                <FieldMessage>Nom tel qu'inscrit au registre.</FieldMessage>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ds-error">Coefficient</Label>
-                <Input
-                  id="ds-error"
-                  icon={<RiNumbersFill />}
+                <GradeInput
+                  aria-label="Note en erreur"
+                  value={gradeErr}
+                  onChange={(e) => setGradeErr(e.target.value)}
                   state="error"
-                  defaultValue="-2"
                 />
-                <FieldMessage tone="error">Doit être supérieur à 0.</FieldMessage>
+                <GradeInput aria-label="Note vide" placeholder="—" />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ds-disabled" optional>
-                  Établissement
-                </Label>
-                <Input
-                  id="ds-disabled"
-                  icon={<RiSchoolFill />}
-                  defaultValue="Lycée Général Leclerc"
-                  disabled
-                />
-                <FieldMessage tone="success">Verrouillé par l'administration.</FieldMessage>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="ds-search">Recherche d'élève</Label>
-                <SearchInput
-                  id="ds-search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onClear={() => setSearch('')}
-                  placeholder="Nom, prénom ou matricule…"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ds-notes">Saisie rapide sur /20</Label>
-                <div className="flex flex-wrap items-center gap-3">
-                  <GradeInput
-                    id="ds-notes"
-                    aria-label="Note valide"
-                    value={gradeOk}
-                    onChange={(e) => setGradeOk(e.target.value)}
-                    state="success"
-                  />
-                  <GradeInput
-                    aria-label="Note en erreur"
-                    value={gradeErr}
-                    onChange={(e) => setGradeErr(e.target.value)}
-                    state="error"
-                  />
-                  <GradeInput aria-label="Note vide" placeholder="—" />
-                </div>
-                <FieldMessage tone="error">La note ne peut pas dépasser 20.</FieldMessage>
-              </div>
+              <FieldMessage tone="error">La note ne peut pas dépasser 20.</FieldMessage>
             </div>
 
             <div className="space-y-1.5">
