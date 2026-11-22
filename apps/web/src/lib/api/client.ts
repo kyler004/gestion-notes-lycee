@@ -67,12 +67,12 @@ async function parseErrorResponse(response: Response): Promise<ApiError> {
   });
 }
 
-async function executeFetch<T>(
+async function performRawFetch(
   path: string,
-  options: ApiRequestOptions<T>,
+  options: Pick<ApiRequestOptions<unknown>, 'method' | 'body' | 'headers' | 'auth' | 'signal'>,
   allowRetry: boolean,
-): Promise<T> {
-  const { method = 'GET', body, headers = {}, auth = true, schema, signal } = options;
+): Promise<Response> {
+  const { method = 'GET', body, headers = {}, auth = true, signal } = options;
 
   const requestHeaders = new Headers(headers);
   if (body !== undefined && !requestHeaders.has('Content-Type')) {
@@ -112,7 +112,7 @@ async function executeFetch<T>(
   ) {
     const newToken = await refreshSingleFlight();
     if (newToken) {
-      return executeFetch(path, options, false);
+      return performRawFetch(path, options, false);
     }
   }
 
@@ -120,20 +120,31 @@ async function executeFetch<T>(
     throw await parseErrorResponse(response);
   }
 
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  const data: unknown = await response.json();
-  if (schema) {
-    return schema.parse(data);
-  }
-  return data as T;
+  return response;
 }
 
 export async function apiRequest<T = unknown>(
   path: string,
   options: ApiRequestOptions<T> = {},
 ): Promise<T> {
-  return executeFetch(path, options, true);
+  const response = await performRawFetch(path, options, true);
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  const data: unknown = await response.json();
+  if (options.schema) {
+    return options.schema.parse(data);
+  }
+  return data as T;
 }
+
+export async function apiFetchBlob(
+  path: string,
+  options: Omit<ApiRequestOptions<Blob>, 'schema'> = {},
+): Promise<Blob> {
+  const response = await performRawFetch(path, options, true);
+  return response.blob();
+}
+

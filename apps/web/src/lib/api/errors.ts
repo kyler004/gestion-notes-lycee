@@ -26,3 +26,12 @@ export class NetworkError extends Error {
     this.name = 'NetworkError';
   }
 }
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
+export function isNetworkError(error: unknown): error is NetworkError {
+  return error instanceof NetworkError;
+}
+
