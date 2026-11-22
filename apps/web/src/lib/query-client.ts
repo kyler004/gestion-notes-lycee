@@ -7,7 +7,7 @@ export function createAppQueryClient(): QueryClient {
       queries: {
         staleTime: 30_000,
         retry: (failureCount, error) => {
-          if (error instanceof ApiError && [400, 401, 403, 404, 422].includes(error.status)) {
+          if (error instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(error.status)) {
             return false;
           }
           return failureCount < 1;

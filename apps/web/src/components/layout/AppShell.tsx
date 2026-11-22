@@ -132,7 +132,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <span className="flex items-center gap-3">
               <Icon className={cn('size-5 shrink-0', isActive ? 'text-emerald-300' : 'text-slate-200')} />
-              <span>{t(item.labelKey)}</span>
+              <span>
+                {item.to === '/admin' && user?.role === 'secretary'
+                  ? t('admin.tabs.students')
+                  : t(item.labelKey)}
+              </span>
             </span>
             {item.milestoneTag && (
               <span
