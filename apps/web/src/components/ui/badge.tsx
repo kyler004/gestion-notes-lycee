@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 
 /** Pastilles colorées selon la nature du message / statut. */
 const badgeVariants = cva(
-  'inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-bold leading-none transition-colors [&_svg]:size-3.5',
+  'inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm px-2.5 py-1 text-xs font-bold leading-none transition-colors [&_svg]:size-3.5',
   {
     variants: {
       variant: {

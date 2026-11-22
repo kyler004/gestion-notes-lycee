@@ -48,6 +48,9 @@ function SessionLifecycleEffects() {
   }, [setOnline]);
 
   useEffect(() => {
+    if (status === 'anonymous') {
+      queryClient.clear();
+    }
     // Vitrine du design system : publique, sans donnée métier.
     if (pathname === '/design-system') return;
     if (status === 'locked' && pathname !== '/lock') {

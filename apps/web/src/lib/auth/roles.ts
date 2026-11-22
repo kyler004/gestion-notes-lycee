@@ -21,9 +21,8 @@ export const NAV_ITEMS: readonly NavItemConfig[] = [
   },
   {
     to: '/admin',
-    labelKey: 'nav.academic',
-    allowedRoles: ['admin', 'censor'],
-    milestoneTag: 'Jalon 3',
+    labelKey: 'nav.admin',
+    allowedRoles: ['admin', 'censor', 'secretary'],
   },
   {
     to: '/reports',
