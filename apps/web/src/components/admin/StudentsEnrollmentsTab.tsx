@@ -57,11 +57,11 @@ type StatusFilter = 'all' | EnrollmentStatus;
 function enrollmentStatusBadge(status: EnrollmentStatus) {
   switch (status) {
     case 'active':
-      return <Badge variant="success">{t('admin.students.statusActive')}</Badge>;
+      return <Badge variant="success">{t('admin.students.rowStatusActive')}</Badge>;
     case 'transferred':
-      return <Badge variant="info">{t('admin.students.statusTransferred')}</Badge>;
+      return <Badge variant="info">{t('admin.students.rowStatusTransferred')}</Badge>;
     case 'dropped':
-      return <Badge variant="warning">{t('admin.students.statusDropped')}</Badge>;
+      return <Badge variant="warning">{t('admin.students.rowStatusDropped')}</Badge>;
   }
 }
 
@@ -752,9 +752,9 @@ export function StudentsEnrollmentsTab({
               value={editEnrollStatus}
               onChange={(v) => setEditEnrollStatus(v as EnrollmentStatus)}
               options={[
-                { value: 'active', label: t('admin.students.statusActive') },
-                { value: 'transferred', label: t('admin.students.statusTransferred') },
-                { value: 'dropped', label: t('admin.students.statusDropped') },
+                { value: 'active', label: t('admin.students.rowStatusActive') },
+                { value: 'transferred', label: t('admin.students.rowStatusTransferred') },
+                { value: 'dropped', label: t('admin.students.rowStatusDropped') },
               ]}
             />
             <Switch
