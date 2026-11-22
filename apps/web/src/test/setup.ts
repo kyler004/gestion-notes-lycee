@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
+import { queryClient } from '@/lib/query-client';
 
 vi.mock('virtual:pwa-register/react', () => ({
   useRegisterSW: () => ({
@@ -38,4 +39,5 @@ if (typeof window !== 'undefined') {
 
 afterEach(() => {
   cleanup();
+  queryClient.clear();
 });
