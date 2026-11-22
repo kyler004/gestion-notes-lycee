@@ -58,7 +58,7 @@ export function Dropdown({
         <DropdownPrimitive.Content
           sideOffset={8}
           align="start"
-          className="z-50 min-w-(--radix-dropdown-menu-trigger-width) animate-pop rounded-lg border border-border bg-popover p-1.5 shadow-lg"
+          className="z-50 max-h-80 min-w-(--radix-dropdown-menu-trigger-width) animate-pop overflow-y-auto rounded-lg border border-border bg-popover p-1.5 shadow-lg"
         >
           {options.map((o) => {
             const active = o.value === value;
