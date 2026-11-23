@@ -28,7 +28,6 @@ export const NAV_ITEMS: readonly NavItemConfig[] = [
     to: '/reports',
     labelKey: 'nav.reports',
     allowedRoles: ['admin', 'censor', 'principal', 'secretary'],
-    milestoneTag: 'Jalon 4',
   },
 ];
 
