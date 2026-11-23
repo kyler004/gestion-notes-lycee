@@ -135,7 +135,9 @@ describe('Auth UI & role-based route guards', () => {
     });
 
     renderAt('/reports');
-    expect(await screen.findByRole('heading', { name: t('nav.reports') })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: t('reports.pageTitleSecretary') }),
+    ).toBeInTheDocument();
 
     renderAt('/grades');
     await waitFor(() => {

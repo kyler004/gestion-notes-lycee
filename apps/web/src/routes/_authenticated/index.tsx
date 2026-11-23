@@ -80,7 +80,7 @@ function DashboardPage() {
                   <span className={cn('grid size-12 place-items-center rounded-md [&_svg]:size-6', m.tone)}>
                     {m.icon}
                   </span>
-                  <Badge variant={m.to === '/reports' ? 'neutral' : 'success'}>{m.phase}</Badge>
+                  <Badge variant="success">{m.phase}</Badge>
                 </div>
                 <div className="flex-1">
                   <CardTitle className="text-base">{m.title}</CardTitle>
