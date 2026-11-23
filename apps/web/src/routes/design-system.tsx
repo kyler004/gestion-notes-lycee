@@ -16,7 +16,7 @@ import {
   RiSchoolFill,
   RiWifiOffFill,
 } from '@remixicon/react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -34,7 +34,14 @@ import {
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 
-export const Route = createFileRoute('/design-system')({ component: DesignSystemPage });
+export const Route = createFileRoute('/design-system')({
+  beforeLoad: () => {
+    if (!import.meta.env.DEV) {
+      throw redirect({ to: '/' });
+    }
+  },
+  component: DesignSystemPage,
+});
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (

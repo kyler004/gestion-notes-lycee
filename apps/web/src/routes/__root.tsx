@@ -51,8 +51,8 @@ function SessionLifecycleEffects() {
     if (status === 'anonymous') {
       queryClient.clear();
     }
-    // Vitrine du design system : publique, sans donnée métier.
-    if (pathname === '/design-system') return;
+    // Vitrine du design system : uniquement accessible sans session en développement local.
+    if (import.meta.env.DEV && pathname === '/design-system') return;
     if (status === 'locked' && pathname !== '/lock') {
       void navigate({ to: '/lock', replace: true });
     } else if (status === 'anonymous' && pathname !== '/login') {
