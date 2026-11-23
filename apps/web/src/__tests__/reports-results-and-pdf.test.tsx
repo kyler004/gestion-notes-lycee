@@ -111,6 +111,32 @@ describe('/reports Stats, Council Decisions, Results, Audit & PDF downloads', ()
       },
       students: [
         {
+          enrollmentId: ENROLL2_ID,
+          studentId: STUDENT2_ID,
+          matricule: '26LBA002',
+          lastName: 'ABDOU',
+          firstName: 'Jean',
+          birthDate: '2011-01-05',
+          birthPlace: 'Douala',
+          sex: 'M',
+          isRepeater: false,
+          subjects: [],
+          totalCoefficient: 4,
+          totalPoints: 44,
+          generalAverage: 11,
+          rank: 2,
+          classSize: 2,
+          classAverage: 13.75,
+          minClassAverage: 11,
+          maxClassAverage: 16.5,
+          passRate: 100,
+          isHonorRoll: false,
+          autoAppreciation: 'Passable',
+          councilDecision: 'none',
+          councilAppreciation: '',
+          absencesHours: 2,
+        },
+        {
           enrollmentId: ENROLL1_ID,
           studentId: STUDENT1_ID,
           matricule: '26LBA001',
@@ -164,32 +190,6 @@ describe('/reports Stats, Council Decisions, Results, Audit & PDF downloads', ()
           councilDecision: 'none',
           councilAppreciation: '',
           absencesHours: 0,
-        },
-        {
-          enrollmentId: ENROLL2_ID,
-          studentId: STUDENT2_ID,
-          matricule: '26LBA002',
-          lastName: 'KAMGA',
-          firstName: 'Jean',
-          birthDate: '2011-01-05',
-          birthPlace: 'Douala',
-          sex: 'M',
-          isRepeater: false,
-          subjects: [],
-          totalCoefficient: 4,
-          totalPoints: 44,
-          generalAverage: 11,
-          rank: 2,
-          classSize: 2,
-          classAverage: 13.75,
-          minClassAverage: 11,
-          maxClassAverage: 16.5,
-          passRate: 100,
-          isHonorRoll: false,
-          autoAppreciation: 'Passable',
-          councilDecision: 'none',
-          councilAppreciation: '',
-          absencesHours: 2,
         },
       ],
     };
@@ -399,8 +399,20 @@ describe('/reports Stats, Council Decisions, Results, Audit & PDF downloads', ()
     expect(await screen.findByText('13,75 / 20')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: t('reports.stats.viewClassBtn') }));
 
-    // 2. Onglet Résultats & PDF -> Tableau d'honneur + modale détail + erreur 503 puis succès PDF
+    // 2. Onglet Résultats & PDF -> tri par rang par défaut (#1 BELLO avant #2 ABDOU) + bascule A-Z
     expect(await screen.findByText('BELLO Aminatou')).toBeInTheDocument();
+    const rankingRowsDefault = screen.getAllByRole('row');
+    expect(rankingRowsDefault[1]).toHaveTextContent('BELLO Aminatou');
+    expect(rankingRowsDefault[2]).toHaveTextContent('ABDOU Jean');
+
+    await user.click(screen.getByRole('button', { name: t('reports.results.sortByName') }));
+    const rankingRowsAlpha = screen.getAllByRole('row');
+    expect(rankingRowsAlpha[1]).toHaveTextContent('ABDOU Jean');
+    expect(rankingRowsAlpha[2]).toHaveTextContent('BELLO Aminatou');
+
+    await user.click(screen.getByRole('button', { name: t('reports.results.sortByRank') }));
+    const rankingRowsBack = screen.getAllByRole('row');
+    expect(rankingRowsBack[1]).toHaveTextContent('BELLO Aminatou');
 
     await user.click(screen.getAllByRole('button', { name: 'Détail notes' })[0]!);
     expect(await screen.findByText(/Détail du bulletin — BELLO Aminatou/)).toBeInTheDocument();
@@ -428,10 +440,13 @@ describe('/reports Stats, Council Decisions, Results, Audit & PDF downloads', ()
 
     await waitFor(() => {
       expect(savedBulkDecisions).toHaveLength(1);
-      expect(savedBulkDecisions[0]).toEqual([
-        { enrollmentId: ENROLL1_ID, decision: 'congratulations', periodId: SEQ1_ID, absencesHours: 0, generalAppreciation: '' },
-        { enrollmentId: ENROLL2_ID, decision: 'pass', periodId: SEQ1_ID, absencesHours: 2, generalAppreciation: '' },
-      ]);
+      expect(savedBulkDecisions[0]).toHaveLength(2);
+      expect(savedBulkDecisions[0]).toEqual(
+        expect.arrayContaining([
+          { enrollmentId: ENROLL1_ID, decision: 'congratulations', periodId: SEQ1_ID, absencesHours: 0, generalAppreciation: '' },
+          { enrollmentId: ENROLL2_ID, decision: 'pass', periodId: SEQ1_ID, absencesHours: 2, generalAppreciation: '' },
+        ]),
+      );
     });
 
     // 4. Onglet Audit des notes
