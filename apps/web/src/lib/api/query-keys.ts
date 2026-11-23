@@ -24,3 +24,23 @@ export const adminKeys = {
     [...adminKeys.all, 'class-students', classId, status ?? 'all'] as const,
   users: (role?: UserRole) => [...adminKeys.all, 'users', role ?? 'all'] as const,
 };
+
+export const reportKeys = {
+  all: ['reports'] as const,
+  schoolStats: (academicYearId: string, periodId: string) =>
+    [...reportKeys.all, 'school-stats', academicYearId, periodId] as const,
+  completeness: (periodId: string) => [...reportKeys.all, 'completeness', periodId] as const,
+  councilDecisions: (filters: { classId?: string; periodId?: string }) =>
+    [...reportKeys.all, 'council-decisions', filters] as const,
+  classResults: (classId: string, periodId: string) =>
+    [...reportKeys.all, 'class-results', classId, periodId] as const,
+  honorRoll: (classId: string, periodId: string) =>
+    [...reportKeys.all, 'honor-roll', classId, periodId] as const,
+  gradeAudit: (filters: {
+    classId?: string;
+    periodId?: string;
+    enrollmentId?: string;
+    classSubjectId?: string;
+  }) => [...reportKeys.all, 'grade-audit', filters] as const,
+};
+

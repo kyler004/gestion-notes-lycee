@@ -140,6 +140,20 @@ export async function apiRequest<T = unknown>(
   return data as T;
 }
 
+function parseContentDispositionFilename(headerValue: string | null): string | null {
+  if (!headerValue) return null;
+  const utf8Match = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(headerValue);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim());
+    } catch {
+      return utf8Match[1].trim();
+    }
+  }
+  const plainMatch = /filename\s*=\s*"?([^";]+)"?/i.exec(headerValue);
+  return plainMatch?.[1]?.trim() ?? null;
+}
+
 export async function apiFetchBlob(
   path: string,
   options: Omit<ApiRequestOptions<Blob>, 'schema'> = {},
@@ -147,4 +161,15 @@ export async function apiFetchBlob(
   const response = await performRawFetch(path, options, true);
   return response.blob();
 }
+
+export async function apiFetchFile(
+  path: string,
+  options: Omit<ApiRequestOptions<Blob>, 'schema'> = {},
+): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await performRawFetch(path, options, true);
+  const blob = await response.blob();
+  const filename = parseContentDispositionFilename(response.headers.get('content-disposition'));
+  return { blob, filename };
+}
+
 
