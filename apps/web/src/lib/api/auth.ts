@@ -53,3 +53,18 @@ export async function meRequest(): Promise<AuthUserPayload> {
     schema: AuthUserSchema,
   });
 }
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export async function changePasswordRequest(
+  input: ChangePasswordInput,
+): Promise<{ success: true }> {
+  return apiRequest('/api/auth/change-password', {
+    method: 'POST',
+    body: input,
+    schema: SuccessResponseSchema,
+  });
+}

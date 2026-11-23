@@ -56,7 +56,10 @@ export interface SessionState {
   selectSavedAccount: (userId: string, db?: LyceeMetaDb) => Promise<'locked' | 'requires_password'>;
   forgetSavedAccount: (userId: string, db?: LyceeMetaDb) => Promise<void>;
   switchUser: (db?: LyceeMetaDb) => Promise<void>;
-  logout: (options?: { allDevices?: boolean }, db?: LyceeMetaDb) => Promise<void>;
+  logout: (
+    options?: { allDevices?: boolean; skipServerRevoke?: boolean; notice?: string | null },
+    db?: LyceeMetaDb,
+  ) => Promise<void>;
   refreshAccessToken: (db?: LyceeMetaDb) => Promise<string | null>;
   setOnline: (online: boolean) => void;
   clearAuthNotice: () => void;
@@ -471,7 +474,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const currentUser = get().user;
     if (currentUser) {
       const account = await getLocalAccount(currentUser.id, db);
-      if (get().isOnline) {
+      if (get().isOnline && !options.skipServerRevoke) {
         try {
           if (options.allDevices && get().accessToken) {
             await logoutAllRequest();
@@ -495,7 +498,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       needsPinSetup: false,
       pinAttempts: 0,
       savedAccounts: toSavedSummaries(freshList),
-      authNotice: null,
+      authNotice: options.notice ?? null,
     });
   },
 
