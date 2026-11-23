@@ -1,12 +1,31 @@
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from '../../api/src/app.js';
 import { parseEnv } from '../../api/src/config/env.js';
 import { seedIfEmpty } from '../../api/src/db/seed.js';
 import { createTestDb } from '../../api/src/db/test-helpers.js';
+import type { PdfRenderer } from '../../api/src/services/pdf.service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDistDir = path.resolve(__dirname, '../dist');
+
+function createE2ePdfRendererIfMissingTypst(): PdfRenderer | undefined {
+  try {
+    execFileSync('which', ['typst'], { stdio: 'ignore' });
+    return undefined;
+  } catch {
+    const stubPdf = Buffer.from(
+      '%PDF-1.4\n1 0 obj<< /Type /Catalog >>endobj\ntrailer<<>>\n%%EOF\n',
+      'utf8',
+    );
+    return {
+      renderBulletin: async () => stubPdf,
+      renderClassList: async () => stubPdf,
+      renderHonorRoll: async () => stubPdf,
+    };
+  }
+}
 
 async function start(): Promise<void> {
   const config = parseEnv({
@@ -30,6 +49,7 @@ async function start(): Promise<void> {
   const app = await buildApp({
     db: handle.db,
     config,
+    pdfRenderer: createE2ePdfRendererIfMissingTypst(),
     enableRateLimit: false,
     logger: false,
     webDistDir,
