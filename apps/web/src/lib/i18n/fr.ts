@@ -30,6 +30,7 @@ export const fr = {
     lockScreen: 'Verrouiller',
     setupPin: 'Configurer un code PIN',
     changePin: 'Modifier le code PIN',
+    changePassword: 'Modifier le mot de passe',
     switchUser: "Changer d'utilisateur",
     logout: 'Déconnexion',
     logoutAll: 'Déconnecter tous les appareils',
@@ -65,6 +66,33 @@ export const fr = {
     logoutSyncAndExit: 'Synchroniser et quitter',
     logoutConfirmForce: 'Quitter sans synchroniser',
     logoutCancel: 'Rester connecté',
+    changePasswordTitle: 'Modifier mon mot de passe',
+    changePasswordDesc:
+      'Après validation, toutes vos sessions actives seront révoquées par sécurité et vous devrez vous reconnecter.',
+    currentPasswordLabel: 'Mot de passe actuel',
+    newPasswordLabel: 'Nouveau mot de passe (min. 8 caractères)',
+    confirmNewPasswordLabel: 'Confirmer le nouveau mot de passe',
+    passwordMinLength: 'Le mot de passe doit contenir au moins 8 caractères.',
+    passwordMismatch: 'Les deux nouveaux mots de passe ne correspondent pas.',
+    passwordSameAsCurrent: 'Le nouveau mot de passe doit être différent de l’actuel.',
+    currentPasswordInvalid: 'Mot de passe actuel incorrect.',
+    changePasswordSubmit: 'Mettre à jour le mot de passe',
+    passwordChangedSuccess: 'Mot de passe mis à jour.',
+    passwordChangedNotice:
+      'Mot de passe modifié. Connectez-vous avec votre nouveau mot de passe.',
+    changePasswordOffline:
+      'Une connexion réseau est requise pour modifier votre mot de passe.',
+    changePasswordOutboxWarn:
+      '{count} modification(s) locale(s) en attente de synchronisation. Synchronisez avant de changer de mot de passe.',
+    logoutAllTitle: 'Déconnecter tous les appareils',
+    logoutAllDesc:
+      'Cette action révoque immédiatement toutes vos sessions ouvertes sur l’ensemble des ordinateurs et téléphones, y compris ce poste.',
+    logoutAllConfirm: 'Déconnecter partout',
+    logoutAllOffline:
+      'Connexion internet requise pour révoquer les sessions sur les autres appareils.',
+    logoutAllSuccess: 'Toutes vos sessions ont été déconnectées.',
+    logoutAllNotice:
+      'Toutes vos sessions ont été révoquées sur le serveur. Reconnectez-vous pour continuer.',
   },
   pin: {
     setupTitle: 'Sécuriser ce poste avec un code PIN',
@@ -562,6 +590,8 @@ export const fr = {
       pdfBusyError: 'Le moteur Typst PDF est temporairement occupé. Réessayez dans un instant.',
       subtabRanking: 'Classement général ({count})',
       subtabHonorRoll: 'Tableau d’honneur ({count})',
+      sortByRank: 'Par rang',
+      sortByName: 'A–Z',
       statClassAverage: 'Moyenne de la classe',
       statPassRate: 'Réussite (≥ {threshold}/20)',
       statMinMax: 'Min / Max',
@@ -601,10 +631,20 @@ export const fr = {
   dashboard: {
     welcome: 'Bonjour, {name}',
     roleSummary: 'Rôle actif : {role}',
-    milestoneNoticeTitle: 'Suite complète opérationnelle (Jalons 1 à 4)',
-    milestoneNoticeBody:
-      'Connexion hors-ligne, saisie des notes avec Outbox, administration scolaire, validation, conseil de classe et bulletins PDF sont prêts.',
-    nextStepsTitle: 'Modules prévus pour votre rôle',
+    overviewTitle: 'Situation locale & établissement',
+    quickAccessTitle: 'Modules disponibles pour votre rôle',
+    statActiveYear: 'Année scolaire active',
+    statNoYear: 'Non synchronisée',
+    statPeriods: 'Périodes ouvertes',
+    statPeriodsDetail: '{open} ouverte(s) · {locked} verrouillée(s)',
+    statClassesLabel: 'Classes configurées',
+    statAssignmentsLabel: 'Mes affectations actives',
+    statSyncLabel: 'Synchronisation locale',
+    statSyncUpToDate: 'À jour',
+    statSyncPending: '{count} en attente',
+    statSyncFailed: '{count} rejet(s)',
+    statSyncNotSynced: 'En attente de synchro',
+    viewOutboxAction: 'Voir la file locale',
     cards: {
       gradesTitle: 'Saisie des notes hors-ligne',
       gradesDesc: 'Grille clavier rapide sur /20 avec calcul instantané des moyennes et file Outbox.',

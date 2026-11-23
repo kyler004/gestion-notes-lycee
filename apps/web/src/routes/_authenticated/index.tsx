@@ -1,12 +1,25 @@
-import { RiBookOpenFill, RiBuilding2Fill, RiFileTextFill, RiRocket2Fill, RiArrowRightFill } from '@remixicon/react';
+import {
+  RiArrowRightFill,
+  RiBookOpenFill,
+  RiBuilding2Fill,
+  RiCalendarCheckFill,
+  RiFileTextFill,
+  RiRefreshFill,
+  RiShieldKeyholeFill,
+  RiTimeFill,
+} from '@remixicon/react';
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardDescription, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Card, CardDescription, CardTitle, StatCard } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/header';
+import { getUserDb } from '@/db/user-db';
 import { hasRoleAccess } from '@/lib/auth/roles';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session.store';
+import { useSyncStore } from '@/stores/sync.store';
 
 export const Route = createFileRoute('/_authenticated/')({
   component: DashboardPage,
@@ -15,6 +28,45 @@ export const Route = createFileRoute('/_authenticated/')({
 function DashboardPage() {
   const user = useSessionStore((s) => s.user);
   const role = user?.role;
+  const setOutboxDialogOpen = useSyncStore((s) => s.setOutboxDialogOpen);
+
+  const snapshot = useLiveQuery(async () => {
+    if (!user?.id) return null;
+    const db = getUserDb(user.id);
+    const [years, periods, classes, assignments, outboxRows] = await Promise.all([
+      db.academicYears.toArray(),
+      db.periods.toArray(),
+      db.classes.toArray(),
+      db.teacherAssignments.toArray(),
+      db.outbox.toArray(),
+    ]);
+
+    const activeYear = years.find((y) => y.isActive) ?? years[0] ?? null;
+    const yearPeriods = activeYear
+      ? periods.filter((p) => p.academicYearId === activeYear.id)
+      : periods;
+    const openPeriodsCount = yearPeriods.filter((p) => p.status === 'open').length;
+    const lockedPeriodsCount = yearPeriods.filter((p) => p.status === 'locked').length;
+    const yearClassesCount = activeYear
+      ? classes.filter((c) => c.academicYearId === activeYear.id).length
+      : classes.length;
+    const activeAssignmentsCount = activeYear
+      ? assignments.filter((a) => a.academicYearId === activeYear.id && a.isActive).length
+      : assignments.filter((a) => a.isActive).length;
+    const pendingCount = outboxRows.filter((row) => row.status !== 'failed').length;
+    const failedCount = outboxRows.filter((row) => row.status === 'failed').length;
+
+    return {
+      activeYearLabel: activeYear?.label ?? null,
+      openPeriodsCount,
+      lockedPeriodsCount,
+      totalPeriodsCount: yearPeriods.length,
+      yearClassesCount,
+      activeAssignmentsCount,
+      pendingCount,
+      failedCount,
+    };
+  }, [user?.id]);
 
   const modules = [
     {
@@ -48,6 +100,22 @@ function DashboardPage() {
     },
   ].filter((m) => hasRoleAccess(role, [...m.allowed]));
 
+  const hasOutboxItems = (snapshot?.pendingCount ?? 0) + (snapshot?.failedCount ?? 0) > 0;
+  const syncValue = !snapshot
+    ? '—'
+    : snapshot.failedCount > 0
+      ? String(snapshot.failedCount)
+      : snapshot.pendingCount > 0
+        ? String(snapshot.pendingCount)
+        : t('dashboard.statSyncUpToDate');
+  const syncLabel = !snapshot
+    ? t('dashboard.statSyncLabel')
+    : snapshot.failedCount > 0
+      ? `${t('dashboard.statSyncLabel')} · ${t('dashboard.statSyncFailed', { count: snapshot.failedCount })}`
+      : snapshot.pendingCount > 0
+        ? `${t('dashboard.statSyncLabel')} · ${t('dashboard.statSyncPending', { count: snapshot.pendingCount })}`
+        : t('dashboard.statSyncLabel');
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -57,19 +125,86 @@ function DashboardPage() {
         actions={role && <Badge variant="dark">{t(`roles.${role}`)}</Badge>}
       />
 
-      <Card variant="dark" className="flex items-start gap-4 p-5">
-        <span className="grid size-11 shrink-0 place-items-center rounded-md bg-emerald-100/20 text-emerald-50">
-          <RiRocket2Fill className="size-6" />
-        </span>
-        <div>
-          <CardTitle className="text-base text-white">{t('dashboard.milestoneNoticeTitle')}</CardTitle>
-          <p className="mt-1 text-sm text-slate-100">{t('dashboard.milestoneNoticeBody')}</p>
+      <section aria-labelledby="overview-heading" className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="overview-heading" className="text-lg font-extrabold">
+            {t('dashboard.overviewTitle')}
+          </h2>
+          {hasOutboxItems && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              icon={<RiRefreshFill />}
+              onClick={() => setOutboxDialogOpen(true)}
+            >
+              {t('dashboard.viewOutboxAction')}
+            </Button>
+          )}
         </div>
-      </Card>
+
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            tone="emerald"
+            label={
+              snapshot?.activeYearLabel
+                ? t('dashboard.statActiveYear')
+                : `${t('dashboard.statActiveYear')} (${t('dashboard.statNoYear')})`
+            }
+            value={snapshot?.activeYearLabel ?? '—'}
+            valueClassName="text-2xl whitespace-nowrap"
+            icon={<RiCalendarCheckFill />}
+          />
+          <StatCard
+            tone="blue"
+            label={
+              snapshot && snapshot.totalPeriodsCount > 0
+                ? t('dashboard.statPeriodsDetail', {
+                    open: snapshot.openPeriodsCount,
+                    locked: snapshot.lockedPeriodsCount,
+                  })
+                : t('dashboard.statPeriods')
+            }
+            value={
+              snapshot && snapshot.totalPeriodsCount > 0
+                ? `${snapshot.openPeriodsCount} / ${snapshot.totalPeriodsCount}`
+                : '—'
+            }
+            valueClassName="text-2xl whitespace-nowrap"
+            icon={<RiTimeFill />}
+          />
+          <StatCard
+            tone="violet"
+            label={
+              role === 'teacher'
+                ? t('dashboard.statAssignmentsLabel')
+                : t('dashboard.statClassesLabel')
+            }
+            value={
+              !snapshot
+                ? '—'
+                : String(
+                    role === 'teacher'
+                      ? snapshot.activeAssignmentsCount
+                      : snapshot.yearClassesCount,
+                  )
+            }
+            valueClassName="text-2xl whitespace-nowrap"
+            icon={<RiShieldKeyholeFill />}
+          />
+          <StatCard
+            tone="slate"
+            label={syncLabel}
+            value={syncValue}
+            valueClassName="text-2xl whitespace-nowrap"
+            icon={<RiRefreshFill />}
+          />
+        </div>
+      </section>
 
       <section aria-labelledby="modules-heading" className="space-y-4">
         <h2 id="modules-heading" className="text-lg font-extrabold">
-          {t('dashboard.nextStepsTitle')}
+          {t('dashboard.quickAccessTitle')}
         </h2>
 
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">

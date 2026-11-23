@@ -1,4 +1,5 @@
 import {
+  RiArrowUpDownFill,
   RiAwardFill,
   RiBarChartBoxFill,
   RiCheckDoubleFill,
@@ -8,10 +9,11 @@ import {
   RiFilePdf2Fill,
   RiInformationFill,
   RiLockFill,
+  RiMedalFill,
   RiTrophyFill,
 } from '@remixicon/react';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -65,6 +67,7 @@ export function ClassResultsReportsTab({
   isOnline: boolean;
 }) {
   const [subview, setSubview] = useState<'ranking' | 'honor'>('ranking');
+  const [rankingSort, setRankingSort] = useState<'rank' | 'name'>('rank');
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [detailStudent, setDetailStudent] = useState<BulletinStudentDto | null>(null);
 
@@ -79,6 +82,26 @@ export function ClassResultsReportsTab({
     queryFn: () => getHonorRoll(classId, periodId),
     enabled: Boolean(classId && periodId),
   });
+
+  const sortedStudents = useMemo(() => {
+    const raw = resultsQuery.data?.students ?? [];
+    return [...raw].sort((a, b) => {
+      if (rankingSort === 'rank') {
+        const ra = a.rank ?? Number.POSITIVE_INFINITY;
+        const rb = b.rank ?? Number.POSITIVE_INFINITY;
+        if (ra !== rb) return ra - rb;
+      }
+      return (
+        a.lastName.localeCompare(b.lastName, 'fr') ||
+        a.firstName.localeCompare(b.firstName, 'fr')
+      );
+    });
+  }, [resultsQuery.data?.students, rankingSort]);
+
+  const honorEntries = useMemo(() => {
+    const raw = honorQuery.data?.entries ?? [];
+    return [...raw].sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999));
+  }, [honorQuery.data?.entries]);
 
   const handleDownload = async (
     key: string,
@@ -114,7 +137,6 @@ export function ClassResultsReportsTab({
   }
 
   const report = resultsQuery.data;
-  const honorEntries = honorQuery.data?.entries ?? [];
   const honorThreshold =
     honorQuery.data?.honorRollThreshold ?? report.statistics.honorRollThreshold;
 
@@ -253,6 +275,30 @@ export function ClassResultsReportsTab({
               {t('reports.results.subtabHonorRoll', { count: honorEntries.length })}
             </Button>
           </div>
+          {subview === 'ranking' && report.students.length > 1 && (
+            <div className="flex items-center gap-1.5" role="group" aria-label={t('reports.results.sortByRank')}>
+              <Button
+                type="button"
+                size="sm"
+                variant={rankingSort === 'rank' ? 'secondary' : 'ghost'}
+                icon={<RiMedalFill />}
+                aria-pressed={rankingSort === 'rank'}
+                onClick={() => setRankingSort('rank')}
+              >
+                {t('reports.results.sortByRank')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={rankingSort === 'name' ? 'secondary' : 'ghost'}
+                icon={<RiArrowUpDownFill />}
+                aria-pressed={rankingSort === 'name'}
+                onClick={() => setRankingSort('name')}
+              >
+                {t('reports.results.sortByName')}
+              </Button>
+            </div>
+          )}
         </CardHeader>
 
         <CardContent>
@@ -270,7 +316,7 @@ export function ClassResultsReportsTab({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-card">
-                  {report.students.map((st) => (
+                  {sortedStudents.map((st) => (
                     <tr key={st.enrollmentId} className="hover:bg-muted/30">
                       <td className="px-4 py-3 font-extrabold text-primary tabular-nums">
                         {st.rank ?? '—'}

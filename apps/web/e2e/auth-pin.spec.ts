@@ -65,4 +65,61 @@ test.describe('Auth, PIN lock, offline reload & shared-PC switching', () => {
     await expect(page.getByText('Comptes enregistrés sur ce poste')).toBeVisible();
     await expect(page.getByText('Administrateur Principal')).toBeVisible();
   });
+
+  test('blocks /design-system in production build and supports self-service password change', async ({
+    page,
+    request,
+  }) => {
+    const tag = `${Date.now().toString(36)}pw`;
+    const username = `prof.${tag}`;
+    const initialPassword = 'InitPass2026!';
+    const updatedPassword = 'NewPass2026!';
+
+    const adminLogin = await request.post('/api/auth/login', {
+      data: { username: 'admin', password: 'AdminLycee2026!' },
+    });
+    expect(adminLogin.ok()).toBeTruthy();
+    const { accessToken } = (await adminLogin.json()) as { accessToken: string };
+
+    const createUserRes = await request.post('/api/users', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      data: {
+        username,
+        fullName: `Compte Test ${tag}`,
+        role: 'teacher',
+        password: initialPassword,
+        isActive: true,
+      },
+    });
+    expect(createUserRes.status()).toBe(201);
+
+    // /design-system doit rediriger vers /login sur le build de production
+    await page.goto('/design-system');
+    await expect(page).toHaveURL(/\/login$/);
+
+    await page.getByLabel('Identifiant').fill(username);
+    await page.getByLabel('Mot de passe').fill(initialPassword);
+    await page.getByRole('button', { name: 'Se connecter' }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await page.getByRole('button', { name: 'Plus tard' }).click();
+
+    await page.getByRole('button', { name: 'Modifier le mot de passe' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Mot de passe actuel').fill(initialPassword);
+    await dialog.getByLabel('Nouveau mot de passe (min. 8 caractères)').fill(updatedPassword);
+    await dialog.getByLabel('Confirmer le nouveau mot de passe').fill(updatedPassword);
+    await dialog.getByRole('button', { name: 'Mettre à jour le mot de passe' }).click();
+
+    await expect(page).toHaveURL(/\/login$/);
+    await expect(
+      page.getByText('Mot de passe modifié. Connectez-vous avec votre nouveau mot de passe.'),
+    ).toBeVisible();
+
+    // L'ancien mot de passe échoue et le nouveau permet la reconnexion
+    await page.getByLabel('Identifiant').fill(username);
+    await page.getByLabel('Mot de passe').fill(updatedPassword);
+    await page.getByRole('button', { name: 'Se connecter' }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText(`Bonjour, Compte Test ${tag}`)).toBeVisible();
+  });
 });

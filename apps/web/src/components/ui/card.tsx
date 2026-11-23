@@ -56,12 +56,14 @@ export function StatCard({
   icon,
   tone = 'emerald',
   className,
+  valueClassName,
 }: {
   label: string;
   value: string;
   icon: React.ReactNode;
   tone?: 'emerald' | 'violet' | 'blue' | 'slate';
   className?: string;
+  valueClassName?: string;
 }) {
   const tones = {
     emerald: 'bg-emerald-50 text-emerald-400',
@@ -74,8 +76,8 @@ export function StatCard({
       <span className={cn('grid size-12 shrink-0 place-items-center rounded-md [&_svg]:size-6', tones[tone])}>
         {icon}
       </span>
-      <div>
-        <p className="text-3xl font-extrabold leading-none tabular-nums">{value}</p>
+      <div className="min-w-0">
+        <p className={cn('text-3xl font-extrabold leading-none tabular-nums', valueClassName)}>{value}</p>
         <p className="mt-1.5 text-xs font-semibold text-muted-foreground">{label}</p>
       </div>
     </Card>

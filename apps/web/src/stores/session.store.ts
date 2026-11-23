@@ -56,7 +56,10 @@ export interface SessionState {
   selectSavedAccount: (userId: string, db?: LyceeMetaDb) => Promise<'locked' | 'requires_password'>;
   forgetSavedAccount: (userId: string, db?: LyceeMetaDb) => Promise<void>;
   switchUser: (db?: LyceeMetaDb) => Promise<void>;
-  logout: (options?: { allDevices?: boolean }, db?: LyceeMetaDb) => Promise<void>;
+  logout: (
+    options?: { allDevices?: boolean; skipServerRevoke?: boolean; notice?: string | null },
+    db?: LyceeMetaDb,
+  ) => Promise<void>;
   refreshAccessToken: (db?: LyceeMetaDb) => Promise<string | null>;
   setOnline: (online: boolean) => void;
   clearAuthNotice: () => void;
@@ -139,51 +142,44 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     try {
-      const refreshed = await refreshRequest(account.refreshToken);
-      const now = new Date().toISOString();
-      const updatedRecord: LocalAccountRecord = {
-        ...account,
-        user: refreshed.user,
-        refreshToken: refreshed.refreshToken,
-        requiresOnlineLogin: false,
-        lastActiveAt: now,
-        updatedAt: now,
-      };
-      await upsertLocalAccount(updatedRecord, db);
+      const refreshedToken = await get().refreshAccessToken(db);
+      if (!refreshedToken) {
+        if (get().status === 'anonymous') {
+          return;
+        }
+        set({ isOnline: false });
+      } else {
+        set({ isOnline: true });
+        // Confirme la session via /me
+        const verifiedUser = await meRequest();
+        const latestAccount = (await getLocalAccount(activeUserId, db)) ?? account;
+        const updatedAfterMe: LocalAccountRecord = {
+          ...latestAccount,
+          user: verifiedUser,
+          updatedAt: new Date().toISOString(),
+        };
+        await upsertLocalAccount(updatedAfterMe, db);
 
-      set({
-        accessToken: refreshed.accessToken,
-        user: refreshed.user,
-        isOnline: true,
-      });
-
-      // Confirme la session via /me
-      const verifiedUser = await meRequest();
-      const updatedAfterMe: LocalAccountRecord = {
-        ...updatedRecord,
-        user: verifiedUser,
-        updatedAt: new Date().toISOString(),
-      };
-      await upsertLocalAccount(updatedAfterMe, db);
-
-      const freshList = await listLocalAccounts(db);
-      set({
-        status: 'authenticated',
-        user: verifiedUser,
-        accessToken: refreshed.accessToken,
-        hasPin,
-        needsPinSetup: !hasPin,
-        pinAttempts: account.pinAttempts,
-        savedAccounts: toSavedSummaries(freshList),
-        authNotice: null,
-        isOnline: true,
-      });
-      return;
+        const freshList = await listLocalAccounts(db);
+        set({
+          status: 'authenticated',
+          user: verifiedUser,
+          accessToken: refreshedToken,
+          hasPin,
+          needsPinSetup: !hasPin,
+          pinAttempts: latestAccount.pinAttempts,
+          savedAccounts: toSavedSummaries(freshList),
+          authNotice: null,
+          isOnline: true,
+        });
+        return;
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
+        const latestAccount = (await getLocalAccount(activeUserId, db)) ?? account;
         await upsertLocalAccount(
           {
-            ...account,
+            ...latestAccount,
             refreshToken: null,
             requiresOnlineLogin: true,
             updatedAt: new Date().toISOString(),
@@ -471,7 +467,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const currentUser = get().user;
     if (currentUser) {
       const account = await getLocalAccount(currentUser.id, db);
-      if (get().isOnline) {
+      if (get().isOnline && !options.skipServerRevoke) {
         try {
           if (options.allDevices && get().accessToken) {
             await logoutAllRequest();
@@ -495,7 +491,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       needsPinSetup: false,
       pinAttempts: 0,
       savedAccounts: toSavedSummaries(freshList),
-      authNotice: null,
+      authNotice: options.notice ?? null,
     });
   },
 
