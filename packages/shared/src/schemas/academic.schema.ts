@@ -111,3 +111,12 @@ export const CreateTeacherAssignmentSchema = z.object({
   classSubjectId: z.string().uuid(),
   academicYearId: z.string().uuid(),
 });
+
+export const ImportStudentsCsvSchema = z.object({
+  csvContent: z.string().min(1).max(512 * 1024),
+  classId: z.string().uuid().optional(),
+  academicYearId: z.string().uuid().optional(),
+  delimiter: z.enum(['auto', ',', ';']).optional().default('auto'),
+  dryRun: z.boolean().optional().default(false),
+  reuseExistingStudents: z.boolean().optional().default(true),
+});

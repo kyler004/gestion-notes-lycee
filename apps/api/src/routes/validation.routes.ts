@@ -21,11 +21,38 @@ const CouncilDecisionsQuerySchema = z
   })
   .merge(PaginationQuerySchema);
 
+const PeriodAuditQuerySchema = z
+  .object({
+    academicYearId: z.string().uuid().optional(),
+    periodId: z.string().uuid().optional(),
+    action: z.enum(['locked', 'unlocked']).optional(),
+  })
+  .merge(PaginationQuerySchema);
+
+const CouncilDecisionAuditQuerySchema = z
+  .object({
+    academicYearId: z.string().uuid().optional(),
+    classId: z.string().uuid().optional(),
+    periodId: z.string().uuid().optional(),
+    enrollmentId: z.string().uuid().optional(),
+  })
+  .merge(PaginationQuerySchema);
+
 export async function registerValidationRoutes(
   app: FastifyInstance,
   deps: { db: DbClient; calculator?: GradingCalculatorContract },
 ): Promise<void> {
   const validationService = createValidationService(deps.db, deps.calculator);
+
+  app.get(
+    '/api/periods/audit',
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal'])] },
+    async (request) => {
+      const { limit, offset, ...filters } = PeriodAuditQuerySchema.parse(request.query);
+      const logs = await validationService.listPeriodAuditLogs(filters, { limit, offset });
+      return { logs };
+    },
+  );
 
   app.get(
     '/api/periods/:periodId/completeness',
@@ -66,6 +93,16 @@ export async function registerValidationRoutes(
         body.decisions,
       );
       return { decisions, count: decisions.length };
+    },
+  );
+
+  app.get(
+    '/api/council-decisions/audit',
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal'])] },
+    async (request) => {
+      const { limit, offset, ...filters } = CouncilDecisionAuditQuerySchema.parse(request.query);
+      const logs = await validationService.listCouncilDecisionAuditLogs(filters, { limit, offset });
+      return { logs };
     },
   );
 

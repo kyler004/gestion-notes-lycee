@@ -78,6 +78,24 @@ export interface SequenceGradeDetail {
   status: GradeStatus | null;
 }
 
+export interface TrimesterScoreDetail {
+  periodId: string;
+  code: string;
+  name: string;
+  orderIndex: number;
+  weight: number;
+  average: number | null;
+}
+
+export interface StudentTrimesterSummary {
+  periodId: string;
+  code: string;
+  name: string;
+  orderIndex: number;
+  generalAverage: number | null;
+  rank: number | null;
+}
+
 export interface BulletinSubjectRow {
   classSubjectId: string;
   subjectCode: string;
@@ -88,6 +106,7 @@ export interface BulletinSubjectRow {
   coefficient: number;
   teacherName: string | null;
   sequenceScores: SequenceGradeDetail[];
+  trimesterScores?: TrimesterScoreDetail[];
   average: number | null;
   weightedScore: number | null;
   rank: number | null;
@@ -108,6 +127,7 @@ export interface BulletinStudentData {
   sex: StudentSex;
   isRepeater: boolean;
   subjects: BulletinSubjectRow[];
+  trimesterSummaries?: StudentTrimesterSummary[];
   totalCoefficient: number;
   totalPoints: number;
   generalAverage: number | null;

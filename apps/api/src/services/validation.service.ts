@@ -11,9 +11,10 @@ import {
   type RawGradeRecordInput,
   type SubjectDefinitionInput,
 } from '@lycee/shared';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { acquireSyncWriteLock, type DbClient, nextSyncVersion } from '../db/client.js';
 import {
+  academicYears,
   classSubjects,
   classes,
   councilDecisionAuditLogs,
@@ -47,6 +48,62 @@ export interface CouncilDecisionInput {
 export interface CouncilDecisionFilters {
   classId?: string;
   periodId?: string;
+}
+
+export interface PeriodAuditFilters {
+  academicYearId?: string;
+  periodId?: string;
+  action?: 'locked' | 'unlocked';
+}
+
+export interface PeriodAuditLogDto {
+  id: string;
+  academicYearId: string;
+  academicYearLabel: string;
+  periodId: string;
+  periodCode: string;
+  periodName: string;
+  periodType: PeriodType;
+  action: 'locked' | 'unlocked';
+  actorId: string;
+  actorName: string;
+  actorUsername: string;
+  reason: string;
+  createdAt: string;
+}
+
+export interface CouncilDecisionAuditFilters {
+  academicYearId?: string;
+  classId?: string;
+  periodId?: string;
+  enrollmentId?: string;
+}
+
+export interface CouncilDecisionAuditLogDto {
+  id: string;
+  councilDecisionId: string;
+  academicYearId: string;
+  classId: string;
+  className: string;
+  enrollmentId: string;
+  studentId: string;
+  studentMatricule: string;
+  studentLastName: string;
+  studentFirstName: string;
+  periodId: string;
+  periodCode: string;
+  periodName: string;
+  periodType: PeriodType;
+  previousDecision: CouncilDecisionType | null;
+  newDecision: CouncilDecisionType;
+  previousAppreciation: string | null;
+  newAppreciation: string;
+  previousAbsencesHours: number | null;
+  newAbsencesHours: number;
+  changedBy: string;
+  changedByName: string;
+  reason: string;
+  serverTimestamp: string;
 }
 
 export interface PeriodDto {
@@ -945,11 +1002,154 @@ export function createValidationService(
     }));
   }
 
+  async function listPeriodAuditLogs(
+    filters: PeriodAuditFilters,
+    pagination: PaginationQuery = { limit: 100, offset: 0 },
+  ): Promise<PeriodAuditLogDto[]> {
+    const conditions = [];
+    if (filters.academicYearId) {
+      conditions.push(eq(periods.academicYearId, filters.academicYearId));
+    }
+    if (filters.periodId) {
+      conditions.push(eq(periodAuditLogs.periodId, filters.periodId));
+    }
+    if (filters.action) {
+      conditions.push(eq(periodAuditLogs.action, filters.action));
+    }
+
+    const rows = await db
+      .select({
+        id: periodAuditLogs.id,
+        academicYearId: periods.academicYearId,
+        academicYearLabel: academicYears.label,
+        periodId: periodAuditLogs.periodId,
+        periodCode: periods.code,
+        periodName: periods.name,
+        periodType: periods.type,
+        action: periodAuditLogs.action,
+        actorId: periodAuditLogs.actorId,
+        actorName: users.fullName,
+        actorUsername: users.username,
+        reason: periodAuditLogs.reason,
+        createdAt: periodAuditLogs.createdAt,
+      })
+      .from(periodAuditLogs)
+      .innerJoin(periods, eq(periodAuditLogs.periodId, periods.id))
+      .innerJoin(academicYears, eq(periods.academicYearId, academicYears.id))
+      .innerJoin(users, eq(periodAuditLogs.actorId, users.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(periodAuditLogs.createdAt), desc(periodAuditLogs.id))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    return rows.map((row) => ({
+      id: row.id,
+      academicYearId: row.academicYearId,
+      academicYearLabel: row.academicYearLabel,
+      periodId: row.periodId,
+      periodCode: row.periodCode,
+      periodName: row.periodName,
+      periodType: row.periodType,
+      action: row.action,
+      actorId: row.actorId,
+      actorName: row.actorName,
+      actorUsername: row.actorUsername,
+      reason: row.reason,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
+  async function listCouncilDecisionAuditLogs(
+    filters: CouncilDecisionAuditFilters,
+    pagination: PaginationQuery = { limit: 100, offset: 0 },
+  ): Promise<CouncilDecisionAuditLogDto[]> {
+    const conditions = [];
+    if (filters.academicYearId) {
+      conditions.push(eq(enrollments.academicYearId, filters.academicYearId));
+    }
+    if (filters.classId) {
+      conditions.push(eq(enrollments.classId, filters.classId));
+    }
+    if (filters.periodId) {
+      conditions.push(eq(councilDecisionAuditLogs.periodId, filters.periodId));
+    }
+    if (filters.enrollmentId) {
+      conditions.push(eq(councilDecisionAuditLogs.enrollmentId, filters.enrollmentId));
+    }
+
+    const rows = await db
+      .select({
+        id: councilDecisionAuditLogs.id,
+        councilDecisionId: councilDecisionAuditLogs.councilDecisionId,
+        academicYearId: enrollments.academicYearId,
+        classId: enrollments.classId,
+        className: classes.name,
+        enrollmentId: councilDecisionAuditLogs.enrollmentId,
+        studentId: enrollments.studentId,
+        studentMatricule: students.matricule,
+        studentLastName: students.lastName,
+        studentFirstName: students.firstName,
+        periodId: councilDecisionAuditLogs.periodId,
+        periodCode: periods.code,
+        periodName: periods.name,
+        periodType: periods.type,
+        previousDecision: councilDecisionAuditLogs.previousDecision,
+        newDecision: councilDecisionAuditLogs.newDecision,
+        previousAppreciation: councilDecisionAuditLogs.previousAppreciation,
+        newAppreciation: councilDecisionAuditLogs.newAppreciation,
+        previousAbsencesHours: councilDecisionAuditLogs.previousAbsencesHours,
+        newAbsencesHours: councilDecisionAuditLogs.newAbsencesHours,
+        changedBy: councilDecisionAuditLogs.changedBy,
+        changedByName: users.fullName,
+        reason: councilDecisionAuditLogs.reason,
+        serverTimestamp: councilDecisionAuditLogs.serverTimestamp,
+      })
+      .from(councilDecisionAuditLogs)
+      .innerJoin(enrollments, eq(councilDecisionAuditLogs.enrollmentId, enrollments.id))
+      .innerJoin(classes, eq(enrollments.classId, classes.id))
+      .innerJoin(students, eq(enrollments.studentId, students.id))
+      .innerJoin(periods, eq(councilDecisionAuditLogs.periodId, periods.id))
+      .innerJoin(users, eq(councilDecisionAuditLogs.changedBy, users.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(councilDecisionAuditLogs.serverTimestamp), desc(councilDecisionAuditLogs.id))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    return rows.map((row) => ({
+      id: row.id,
+      councilDecisionId: row.councilDecisionId,
+      academicYearId: row.academicYearId,
+      classId: row.classId,
+      className: row.className,
+      enrollmentId: row.enrollmentId,
+      studentId: row.studentId,
+      studentMatricule: row.studentMatricule,
+      studentLastName: row.studentLastName,
+      studentFirstName: row.studentFirstName,
+      periodId: row.periodId,
+      periodCode: row.periodCode,
+      periodName: row.periodName,
+      periodType: row.periodType,
+      previousDecision: row.previousDecision,
+      newDecision: row.newDecision,
+      previousAppreciation: row.previousAppreciation,
+      newAppreciation: row.newAppreciation,
+      previousAbsencesHours: row.previousAbsencesHours,
+      newAbsencesHours: row.newAbsencesHours,
+      changedBy: row.changedBy,
+      changedByName: row.changedByName,
+      reason: row.reason,
+      serverTimestamp: row.serverTimestamp.toISOString(),
+    }));
+  }
+
   return {
     getPeriodCompleteness,
     lockPeriod,
     unlockPeriod,
+    listPeriodAuditLogs,
     bulkUpsertCouncilDecisions,
     listCouncilDecisions,
+    listCouncilDecisionAuditLogs,
   };
 }

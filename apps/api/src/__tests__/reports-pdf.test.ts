@@ -1207,3 +1207,691 @@ writeFileSync(outPath, Buffer.from('%PDF-1.4\\n%mock-typst\\n'));
     });
   });
 });
+
+describe('Annual Reports & PDF Endpoints', () => {
+  let dbHandle: TestDbHandle;
+  let app: ReturnType<typeof Fastify>;
+
+  const renderBulletinMock = vi.fn(async (payload: BulletinReportPayload) =>
+    Buffer.from(`%PDF-1.4\n%annual-bulletin:${payload.students.length}`),
+  );
+  const renderClassListMock = vi.fn(async (payload: ClassListReportPayload) =>
+    Buffer.from(`%PDF-1.4\n%class-list:${payload.students.length}`),
+  );
+  const renderHonorRollMock = vi.fn(async (payload: HonorRollReportPayload) =>
+    Buffer.from(`%PDF-1.4\n%annual-honor:${payload.entries.length}`),
+  );
+
+  const mockPdfRenderer: PdfRenderer = {
+    renderBulletin: renderBulletinMock,
+    renderClassList: renderClassListMock,
+    renderHonorRoll: renderHonorRollMock,
+  };
+
+  let yearId: string;
+  let classAId: string;
+  let trimesterIds: string[] = [];
+  let enrAliceId: string;
+  let enrBobId: string;
+  let adminToken: string;
+  let secretaryToken: string;
+  let mainTeacherToken: string;
+  let subjectTeacherToken: string;
+
+  beforeAll(async () => {
+    dbHandle = await createTestDb();
+    const db = dbHandle.db;
+    const pwHash = await hashPassword('TestPassword123!');
+
+    const insertedUsers = await db
+      .insert(users)
+      .values([
+        { username: 'ann.admin', fullName: 'Admin Annuel', role: 'admin', passwordHash: pwHash },
+        {
+          username: 'ann.sec',
+          fullName: 'Secrétaire Annuel',
+          role: 'secretary',
+          passwordHash: pwHash,
+        },
+        { username: 'ann.pp', fullName: 'Prof Principal', role: 'teacher', passwordHash: pwHash },
+        { username: 'ann.prof', fullName: 'Prof Matière', role: 'teacher', passwordHash: pwHash },
+      ])
+      .returning();
+
+    const byUsername = new Map(insertedUsers.map((u) => [u.username, u.id]));
+    const adminId = byUsername.get('ann.admin')!;
+    const secretaryId = byUsername.get('ann.sec')!;
+    const mainTeacherId = byUsername.get('ann.pp')!;
+    const subjectTeacherId = byUsername.get('ann.prof')!;
+
+    await db.insert(schoolProfile).values({
+      id: 1,
+      name: 'Lycée Annuel Test',
+      motto: 'Travail - Succès',
+      country: 'République du Cameroun',
+      ministry: 'MINESEC',
+      logoData: SAMPLE_PNG_BUFFER,
+      logoMimeType: 'image/png',
+    });
+
+    const [year] = await db
+      .insert(academicYears)
+      .values({
+        label: '2026-2027',
+        startDate: '2026-09-01',
+        endDate: '2027-07-01',
+        isActive: true,
+      })
+      .returning();
+    yearId = year!.id;
+
+    await db.insert(gradingRules).values({
+      academicYearId: yearId,
+      trimestersCount: 3,
+      sequencesPerTrimester: 2,
+      sequenceWeights: [1, 1],
+      trimesterWeights: [1, 1, 1],
+      passingThreshold: '10.00',
+      honorRollThreshold: '12.00',
+      encouragementThreshold: '13.00',
+      congratulationThreshold: '15.00',
+      treatAbsentAsZero: true,
+      appreciationScale: [
+        { min: 0, max: 9.99, label: 'Insuffisant' },
+        { min: 10, max: 11.99, label: 'Passable' },
+        { min: 12, max: 13.99, label: 'Assez bien' },
+        { min: 14, max: 20, label: 'Très bien' },
+      ],
+    });
+
+    const insertedTrimesters = await db
+      .insert(periods)
+      .values([
+        {
+          academicYearId: yearId,
+          type: 'trimester',
+          code: 'T1',
+          name: '1er Trimestre',
+          orderIndex: 1,
+          weight: '1.00',
+          status: 'locked',
+          lockedAt: new Date('2026-12-20T10:00:00Z'),
+          lockedBy: adminId,
+        },
+        {
+          academicYearId: yearId,
+          type: 'trimester',
+          code: 'T2',
+          name: '2e Trimestre',
+          orderIndex: 2,
+          weight: '1.00',
+          status: 'open',
+        },
+        {
+          academicYearId: yearId,
+          type: 'trimester',
+          code: 'T3',
+          name: '3e Trimestre',
+          orderIndex: 3,
+          weight: '1.00',
+          status: 'open',
+        },
+      ])
+      .returning();
+    trimesterIds = insertedTrimesters.map((t) => t.id);
+
+    const insertedSeqs = await db
+      .insert(periods)
+      .values([
+        {
+          academicYearId: yearId,
+          parentPeriodId: trimesterIds[0]!,
+          type: 'sequence',
+          code: 'S1',
+          name: 'Séquence 1',
+          orderIndex: 1,
+          weight: '1.00',
+          status: 'locked',
+        },
+        {
+          academicYearId: yearId,
+          parentPeriodId: trimesterIds[0]!,
+          type: 'sequence',
+          code: 'S2',
+          name: 'Séquence 2',
+          orderIndex: 2,
+          weight: '1.00',
+          status: 'locked',
+        },
+        {
+          academicYearId: yearId,
+          parentPeriodId: trimesterIds[1]!,
+          type: 'sequence',
+          code: 'S3',
+          name: 'Séquence 3',
+          orderIndex: 3,
+          weight: '1.00',
+          status: 'open',
+        },
+        {
+          academicYearId: yearId,
+          parentPeriodId: trimesterIds[1]!,
+          type: 'sequence',
+          code: 'S4',
+          name: 'Séquence 4',
+          orderIndex: 4,
+          weight: '1.00',
+          status: 'open',
+        },
+        {
+          academicYearId: yearId,
+          parentPeriodId: trimesterIds[2]!,
+          type: 'sequence',
+          code: 'S5',
+          name: 'Séquence 5',
+          orderIndex: 5,
+          weight: '1.00',
+          status: 'open',
+        },
+        {
+          academicYearId: yearId,
+          parentPeriodId: trimesterIds[2]!,
+          type: 'sequence',
+          code: 'S6',
+          name: 'Séquence 6',
+          orderIndex: 6,
+          weight: '1.00',
+          status: 'open',
+        },
+      ])
+      .returning();
+    const seqIds = insertedSeqs.map((s) => s.id);
+
+    const [clsA, clsB] = await db
+      .insert(classes)
+      .values([
+        { academicYearId: yearId, name: '2nde C', level: '2nde', series: 'C', mainTeacherId },
+        { academicYearId: yearId, name: '2nde A', level: '2nde', series: 'A', mainTeacherId: null },
+      ])
+      .returning();
+    classAId = clsA!.id;
+
+    const [grpSci] = await db
+      .insert(subjectGroups)
+      .values({ academicYearId: yearId, name: 'Sciences', orderIndex: 1 })
+      .returning();
+
+    const [subMath] = await db
+      .insert(subjects)
+      .values({ code: 'MATH-AN', name: 'Mathématiques', shortName: 'Maths' })
+      .returning();
+
+    const [csMathA, csMathB] = await db
+      .insert(classSubjects)
+      .values([
+        {
+          classId: classAId,
+          subjectId: subMath!.id,
+          subjectGroupId: grpSci!.id,
+          coefficient: '4.00',
+        },
+        {
+          classId: clsB!.id,
+          subjectId: subMath!.id,
+          subjectGroupId: grpSci!.id,
+          coefficient: '2.00',
+        },
+      ])
+      .returning();
+
+    await db.insert(teacherAssignments).values({
+      teacherId: subjectTeacherId,
+      classSubjectId: csMathA!.id,
+      academicYearId: yearId,
+      isActive: true,
+    });
+
+    const [stAlice, stBob, stClassB] = await db
+      .insert(students)
+      .values([
+        {
+          matricule: 'AN001',
+          lastName: 'ALICE',
+          firstName: 'Anne',
+          birthDate: '2010-01-10',
+          sex: 'F',
+        },
+        {
+          matricule: 'AN002',
+          lastName: 'BOB',
+          firstName: 'Luc',
+          birthDate: '2010-04-20',
+          sex: 'M',
+        },
+        {
+          matricule: 'AN003',
+          lastName: 'CLAIRE',
+          firstName: 'Eve',
+          birthDate: '2010-09-12',
+          sex: 'F',
+        },
+      ])
+      .returning();
+
+    const [enrA, enrB, enrC] = await db
+      .insert(enrollments)
+      .values([
+        { studentId: stAlice!.id, classId: classAId, academicYearId: yearId, status: 'active' },
+        { studentId: stBob!.id, classId: classAId, academicYearId: yearId, status: 'active' },
+        { studentId: stClassB!.id, classId: clsB!.id, academicYearId: yearId, status: 'active' },
+      ])
+      .returning();
+    enrAliceId = enrA!.id;
+    enrBobId = enrB!.id;
+
+    // Alice scores: T1 (12,14 -> 13), T2 (14,16 -> 15), T3 (16,18 -> 17) => Annual 15.00
+    // Bob scores: T1 (8,10 -> 9), T2 (9,11 -> 10), T3 (10,12 -> 11) => Annual 10.00
+    // Claire (class B): S1=14 => Annual 14.00
+    await db.insert(grades).values([
+      {
+        enrollmentId: enrAliceId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[0]!,
+        score: '12.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrAliceId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[1]!,
+        score: '14.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrAliceId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[2]!,
+        score: '14.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrAliceId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[3]!,
+        score: '16.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrAliceId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[4]!,
+        score: '16.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrAliceId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[5]!,
+        score: '18.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrBobId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[0]!,
+        score: '8.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrBobId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[1]!,
+        score: '10.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrBobId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[2]!,
+        score: '9.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrBobId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[3]!,
+        score: '11.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrBobId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[4]!,
+        score: '10.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrBobId,
+        classSubjectId: csMathA!.id,
+        periodId: seqIds[5]!,
+        score: '12.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+      {
+        enrollmentId: enrC!.id,
+        classSubjectId: csMathB!.id,
+        periodId: seqIds[0]!,
+        score: '14.00',
+        status: 'present',
+        enteredBy: adminId,
+      },
+    ]);
+
+    // Official snapshot on locked T1 + council decisions across T1..T3
+    await db.insert(periodStudentResults).values([
+      {
+        periodId: trimesterIds[0]!,
+        classId: classAId,
+        enrollmentId: enrAliceId,
+        totalCoefficient: '4.00',
+        totalPoints: '52.00',
+        generalAverage: '13.00',
+        rank: 1,
+        classSize: 2,
+        classAverage: '11.00',
+        minClassAverage: '9.00',
+        maxClassAverage: '13.00',
+        passRate: '50.00',
+        isHonorRoll: true,
+        autoAppreciation: 'Assez bien',
+      },
+      {
+        periodId: trimesterIds[0]!,
+        classId: classAId,
+        enrollmentId: enrBobId,
+        totalCoefficient: '4.00',
+        totalPoints: '36.00',
+        generalAverage: '9.00',
+        rank: 2,
+        classSize: 2,
+        classAverage: '11.00',
+        minClassAverage: '9.00',
+        maxClassAverage: '13.00',
+        passRate: '50.00',
+        isHonorRoll: false,
+        autoAppreciation: 'Insuffisant',
+      },
+    ]);
+
+    await db.insert(periodSubjectResults).values([
+      {
+        periodId: trimesterIds[0]!,
+        classId: classAId,
+        enrollmentId: enrAliceId,
+        classSubjectId: csMathA!.id,
+        sequenceScoresJson: [],
+        average: '13.00',
+        weightedScore: '52.00',
+        rank: 1,
+        classAverage: '11.00',
+        minScore: '9.00',
+        maxScore: '13.00',
+        appreciation: 'Assez bien',
+      },
+      {
+        periodId: trimesterIds[0]!,
+        classId: classAId,
+        enrollmentId: enrBobId,
+        classSubjectId: csMathA!.id,
+        sequenceScoresJson: [],
+        average: '9.00',
+        weightedScore: '36.00',
+        rank: 2,
+        classAverage: '11.00',
+        minScore: '9.00',
+        maxScore: '13.00',
+        appreciation: 'Insuffisant',
+      },
+    ]);
+
+    await db.insert(councilDecisions).values([
+      {
+        enrollmentId: enrAliceId,
+        periodId: trimesterIds[0]!,
+        decision: 'encouragement',
+        generalAppreciation: 'T1 encourageant',
+        absencesHours: 2,
+        decidedBy: adminId,
+      },
+      {
+        enrollmentId: enrAliceId,
+        periodId: trimesterIds[1]!,
+        decision: 'congratulations',
+        generalAppreciation: 'T2 très bien',
+        absencesHours: 3,
+        decidedBy: adminId,
+      },
+      {
+        enrollmentId: enrAliceId,
+        periodId: trimesterIds[2]!,
+        decision: 'pass',
+        generalAppreciation: 'Admise en 1ère C',
+        absencesHours: 1,
+        decidedBy: adminId,
+      },
+    ]);
+
+    app = Fastify();
+    registerErrorHandler(app);
+    await app.register(authPlugin, {
+      jwtAccessSecret: 'test-secret-for-annual-routes-min-32-chars',
+      jwtAccessTtl: '15m',
+      db,
+    });
+    await registerReportsRoutes(app, { db, pdfRenderer: mockPdfRenderer });
+    await app.ready();
+
+    adminToken = app.jwt.sign({ sub: adminId, ver: 1 });
+    secretaryToken = app.jwt.sign({ sub: secretaryId, ver: 1 });
+    mainTeacherToken = app.jwt.sign({ sub: mainTeacherId, ver: 1 });
+    subjectTeacherToken = app.jwt.sign({ sub: subjectTeacherId, ver: 1 });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await dbHandle.close();
+  });
+
+  it('computes annual class results with trimester summaries, last-trimester council decision, cumulative absences, and transitions isOfficial', async () => {
+    const provisionalRes = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/class-results?classId=${classAId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(provisionalRes.statusCode).toBe(200);
+    const body = provisionalRes.json();
+
+    expect(body.period.type).toBe('annual');
+    expect(body.period.code).toBe('ANNUEL');
+    expect(body.isOfficial).toBe(false);
+    expect(body.period.isOfficial).toBe(false);
+    expect(body.statistics.classAverage).toBe(12.5);
+    expect(body.statistics.passRate).toBe(100);
+
+    const alice = body.students.find((s: { matricule: string }) => s.matricule === 'AN001');
+    const bob = body.students.find((s: { matricule: string }) => s.matricule === 'AN002');
+    expect(alice.generalAverage).toBe(15);
+    expect(alice.rank).toBe(1);
+    expect(alice.isHonorRoll).toBe(true);
+    expect(alice.councilDecision).toBe('pass');
+    expect(alice.councilAppreciation).toBe('Admise en 1ère C');
+    expect(alice.absencesHours).toBe(6); // 2 + 3 + 1
+    expect(alice.trimesterSummaries).toEqual([
+      expect.objectContaining({ code: 'T1', generalAverage: 13, rank: 1 }),
+      expect.objectContaining({ code: 'T2', generalAverage: 15, rank: 1 }),
+      expect.objectContaining({ code: 'T3', generalAverage: 17, rank: 1 }),
+    ]);
+    expect(alice.subjects[0].trimesterScores.map((ts: { average: number }) => ts.average)).toEqual([
+      13, 15, 17,
+    ]);
+
+    expect(bob.generalAverage).toBe(10);
+    expect(bob.rank).toBe(2);
+    expect(bob.isHonorRoll).toBe(false);
+
+    // Lock T2 & T3 -> annual report becomes official
+    await dbHandle.db
+      .update(periods)
+      .set({ status: 'locked', lockedAt: new Date('2027-06-25T15:00:00Z') })
+      .where(and(eq(periods.academicYearId, yearId), eq(periods.type, 'trimester')));
+
+    const officialRes = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/class-results?classId=${classAId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(officialRes.statusCode).toBe(200);
+    expect(officialRes.json().isOfficial).toBe(true);
+    expect(officialRes.json().period.lockedAt).toBe('2027-06-25T15:00:00.000Z');
+  });
+
+  it('serves annual honor-roll, school-stats, RBAC rules, and annual PDFs with ETag/304', async () => {
+    const honorRes = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/honor-roll?classId=${classAId}`,
+      headers: { authorization: `Bearer ${mainTeacherToken}` },
+    });
+    expect(honorRes.statusCode).toBe(200);
+    expect(honorRes.json().period.type).toBe('annual');
+    expect(honorRes.json().entries).toHaveLength(1);
+    expect(honorRes.json().entries[0].matricule).toBe('AN001');
+
+    // Subject-only teacher blocked from annual class-results, honor-roll, and student PDF
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/reports/annual/class-results?classId=${classAId}`,
+          headers: { authorization: `Bearer ${subjectTeacherToken}` },
+        })
+      ).statusCode,
+    ).toBe(403);
+
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/reports/annual/bulletins/student/${enrAliceId}/pdf`,
+          headers: { authorization: `Bearer ${subjectTeacherToken}` },
+        })
+      ).statusCode,
+    ).toBe(403);
+
+    // school-stats annual: admin -> 200 across both classes, secretary -> 403
+    const statsRes = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/school-stats?academicYearId=${yearId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(statsRes.statusCode).toBe(200);
+    expect(statsRes.json().period.type).toBe('annual');
+    expect(statsRes.json().classes).toHaveLength(2);
+    expect(statsRes.json().totalStudents).toBe(3);
+
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/reports/annual/school-stats?academicYearId=${yearId}`,
+          headers: { authorization: `Bearer ${secretaryToken}` },
+        })
+      ).statusCode,
+    ).toBe(403);
+
+    // Annual PDFs & 304 ETag
+    const studentPdf1 = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/bulletins/student/${enrAliceId}/pdf`,
+      headers: { authorization: `Bearer ${mainTeacherToken}` },
+    });
+    expect(studentPdf1.statusCode).toBe(200);
+    expect(studentPdf1.headers['content-type']).toContain('application/pdf');
+    expect(studentPdf1.headers.etag).toMatch(/^"[a-f0-9]{64}"$/);
+
+    const studentPdf304 = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/bulletins/student/${enrAliceId}/pdf`,
+      headers: {
+        authorization: `Bearer ${mainTeacherToken}`,
+        'if-none-match': studentPdf1.headers.etag as string,
+      },
+    });
+    expect(studentPdf304.statusCode).toBe(304);
+
+    const classPdf = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/bulletins/class/${classAId}/pdf`,
+      headers: { authorization: `Bearer ${secretaryToken}` },
+    });
+    expect(classPdf.statusCode).toBe(200);
+
+    const honorPdf = await app.inject({
+      method: 'GET',
+      url: `/api/reports/annual/honor-roll/${classAId}/pdf`,
+      headers: { authorization: `Bearer ${secretaryToken}` },
+    });
+    expect(honorPdf.statusCode).toBe(200);
+  });
+
+  it('compiles annual Typst templates when typst binary is installed (or passes mock data contract)', async () => {
+    const resultsService = createResultsService(dbHandle.db);
+    const [annualClassPayload, annualStudentPayload, annualHonorPayload] = await Promise.all([
+      resultsService.buildAnnualBulletinPayload({ classId: classAId }),
+      resultsService.buildAnnualBulletinPayload({ enrollmentId: enrAliceId }),
+      resultsService.buildAnnualHonorRollPayload(classAId),
+    ]);
+
+    expect(annualStudentPayload.period.type).toBe('annual');
+    expect(annualStudentPayload.students[0]?.trimesterSummaries).toHaveLength(3);
+    expect(annualStudentPayload.students[0]?.subjects[0]?.trimesterScores).toHaveLength(3);
+
+    let typstAvailable = false;
+    try {
+      await execFileAsync('typst', ['--version'], { timeout: 3000 });
+      typstAvailable = true;
+    } catch {
+      typstAvailable = false;
+    }
+
+    if (!typstAvailable) {
+      if (process.env.REQUIRE_REAL_TYPST === '1') {
+        throw new Error('Le binaire typst est requis lorsque REQUIRE_REAL_TYPST=1.');
+      }
+      return;
+    }
+
+    const renderer = new TypstPdfRenderer('typst');
+    const [pdfClass, pdfStudent, pdfHonor] = await Promise.all([
+      renderer.renderBulletin(annualClassPayload),
+      renderer.renderBulletin(annualStudentPayload),
+      renderer.renderHonorRoll(annualHonorPayload),
+    ]);
+
+    for (const buf of [pdfClass, pdfStudent, pdfHonor]) {
+      expect(buf.subarray(0, 5).toString('utf8')).toBe('%PDF-');
+      expect(buf.length).toBeGreaterThan(1000);
+    }
+  });
+});

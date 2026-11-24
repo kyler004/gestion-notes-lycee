@@ -2,6 +2,7 @@ import {
   CreateEnrollmentSchema,
   CreateStudentSchema,
   ENROLLMENT_STATUSES,
+  ImportStudentsCsvSchema,
   UpdateEnrollmentSchema,
   UpdateStudentSchema,
 } from '@lycee/shared';
@@ -12,6 +13,7 @@ import { PaginationQuerySchema } from '../lib/sql.js';
 import {
   createEnrollment,
   createStudent,
+  importStudentsCsv,
   listClassStudents,
   listStudents,
   updateEnrollment,
@@ -61,6 +63,26 @@ export async function registerStudentsRoutes(
       const input = CreateStudentSchema.parse(request.body);
       const created = await createStudent(db, input);
       return reply.status(201).send(created);
+    },
+  );
+
+  app.post(
+    '/api/students/import-csv',
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'secretary'])],
+      config: {
+        rateLimit: {
+          hook: 'preHandler',
+          max: 10,
+          timeWindow: '1 minute',
+          keyGenerator: (request) => request.currentUser?.id ?? request.ip,
+        },
+      },
+    },
+    async (request, reply) => {
+      const input = ImportStudentsCsvSchema.parse(request.body);
+      const result = await importStudentsCsv(db, input);
+      return reply.status(result.committed ? 201 : 200).send(result);
     },
   );
 

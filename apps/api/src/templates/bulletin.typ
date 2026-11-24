@@ -263,26 +263,33 @@
     v(5pt)
 
     let is-trimester = data.period.type == "trimester"
+    let is-annual = data.period.type == "annual"
     let seq-headers = if is-trimester and student.subjects.len() > 0 {
       student.subjects.at(0).sequenceScores
     } else {
       ()
     }
-    let seq-count = seq-headers.len()
+    let tri-headers = if is-annual and student.subjects.len() > 0 {
+      student.subjects.at(0).at("trimesterScores", default: ())
+    } else {
+      ()
+    }
+    let period-headers = if is-annual { tri-headers } else { seq-headers }
+    let seq-count = period-headers.len()
     let total-cols = 1 + seq-count + 6
-    let col-widths = (1fr,) + seq-headers.map(_ => 13mm) + (14mm, 11mm, 14mm, 12mm, 15mm, 25mm)
-    let col-aligns = (left,) + seq-headers.map(_ => right) + (right, center, right, center, right, left)
+    let col-widths = (1fr,) + period-headers.map(_ => 13mm) + (14mm, 11mm, 14mm, 12mm, 15mm, 25mm)
+    let col-aligns = (left,) + period-headers.map(_ => right) + (right, center, right, center, right, left)
 
     let header-cells = (
       table.cell(align: left)[#text(fill: white, size: 7.7pt, weight: "bold")[Matière / Enseignant]],
     )
-    for seq in seq-headers {
+    for pcol in period-headers {
       header-cells.push(
-        table.cell(align: center)[#text(fill: white, size: 7.7pt, weight: "bold")[#seq.code]],
+        table.cell(align: center)[#text(fill: white, size: 7.7pt, weight: "bold")[#pcol.code]],
       )
     }
     header-cells += (
-      table.cell(align: center)[#text(fill: white, size: 7.7pt, weight: "bold")[#if is-trimester [Moy.] else [Note]]],
+      table.cell(align: center)[#text(fill: white, size: 7.7pt, weight: "bold")[#if is-annual [Moy. An.] else if is-trimester [Moy.] else [Note]]],
       table.cell(align: center)[#text(fill: white, size: 7.7pt, weight: "bold")[Coef.]],
       table.cell(align: center)[#text(fill: white, size: 7.7pt, weight: "bold")[Total]],
       table.cell(align: center)[#text(fill: white, size: 7.7pt, weight: "bold")[Rang]],
@@ -313,12 +320,24 @@
         ]
       ])
 
-      for i in range(seq-count) {
-        let sq = sub.sequenceScores.at(i, default: none)
-        if sq == none {
-          body-cells.push([—])
-        } else {
-          body-cells.push([#fmt-grade(sq.score, sq.status)])
+      if is-annual {
+        let tri-scores = sub.at("trimesterScores", default: ())
+        for i in range(seq-count) {
+          let ts = tri-scores.at(i, default: none)
+          if ts == none {
+            body-cells.push([—])
+          } else {
+            body-cells.push([#fmt(ts.average)])
+          }
+        }
+      } else {
+        for i in range(seq-count) {
+          let sq = sub.sequenceScores.at(i, default: none)
+          if sq == none {
+            body-cells.push([—])
+          } else {
+            body-cells.push([#fmt-grade(sq.score, sq.status)])
+          }
         }
       }
 
@@ -357,6 +376,29 @@
 
     v(5pt)
 
+    let tri-summaries = if is-annual {
+      student.at("trimesterSummaries", default: ())
+    } else {
+      ()
+    }
+    if tri-summaries.len() > 0 {
+      box(
+        width: 100%,
+        stroke: 0.5pt + rgb("#cbd5e1"),
+        fill: rgb("#f1f5f9"),
+        inset: (x: 6pt, y: 4pt),
+        radius: 3pt,
+      )[
+        #let tri-items = tri-summaries.map(ts => [
+          *#ts.code :* #fmt(ts.generalAverage) / 20 (#fmt-rank(ts.rank, sex: student.sex))
+        ])
+        #text(size: 7.8pt)[
+          *Rappel des trimestres :* #tri-items.join([ · ])
+        ]
+      ]
+      v(4pt)
+    }
+
     // Summary & Council Decision Block
     grid(
       columns: (1fr, 1.15fr),
@@ -375,8 +417,8 @@
           gutter: 3pt,
           [Total Coefficients :], [*#fmt-coef(student.totalCoefficient)*],
           [Total Points :], [*#fmt(student.totalPoints)*],
-          [Moyenne Générale :], [*#text(size: 10pt, fill: rgb("#1e3a5f"))[#fmt(student.generalAverage) / 20]*],
-          [Rang dans la classe :], [*#fmt-rank(student.rank, sex: student.sex)* sur *#student.classSize*],
+          [#if is-annual [Moyenne Annuelle :] else [Moyenne Générale :]], [*#text(size: 10pt, fill: rgb("#1e3a5f"))[#fmt(student.generalAverage) / 20]*],
+          [#if is-annual [Rang Annuel :] else [Rang dans la classe :]], [*#fmt-rank(student.rank, sex: student.sex)* sur *#student.classSize*],
           [Moyenne de la classe :], [*#fmt(student.classAverage) / 20*],
           [Min / Max de la classe :], [*#fmt(student.minClassAverage)* / *#fmt(student.maxClassAverage)*],
         )

@@ -1,15 +1,16 @@
 import {
   type AuthUserPayload,
+  CreateStudentSchema,
   type CreateEnrollmentSchema,
-  type CreateStudentSchema,
   type EnrollmentStatus,
+  type ImportStudentsCsvSchema,
   type StudentSex,
   type UpdateEnrollmentSchema,
   type UpdateStudentSchema,
 } from '@lycee/shared';
-import { and, asc, eq, ilike, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import type { z } from 'zod';
-import { type DbClient, nextSyncVersion } from '../db/client.js';
+import { acquireSyncWriteLock, type DbClient, nextSyncVersion } from '../db/client.js';
 import {
   academicYears,
   classes,
@@ -22,13 +23,26 @@ import {
   students,
   teacherAssignments,
 } from '../db/schema.js';
-import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
+import {
+  type CsvRowValidationError,
+  type NormalizedCsvStudentRow,
+  parseStudentsCsv,
+  validateParsedCsvRow,
+} from '../lib/csv.js';
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '../lib/errors.js';
 import { escapeLike, type PaginationQuery } from '../lib/sql.js';
 
 export type CreateStudentInput = z.infer<typeof CreateStudentSchema>;
 export type UpdateStudentInput = z.infer<typeof UpdateStudentSchema>;
 export type CreateEnrollmentInput = z.infer<typeof CreateEnrollmentSchema>;
 export type UpdateEnrollmentInput = z.infer<typeof UpdateEnrollmentSchema>;
+export type ImportStudentsCsvInput = z.infer<typeof ImportStudentsCsvSchema>;
 
 export interface StudentDto {
   id: string;
@@ -458,3 +472,415 @@ export async function listClassStudents(
     .limit(pagination.limit)
     .offset(pagination.offset);
 }
+
+export interface CsvImportPreviewEntry {
+  line: number;
+  matricule: string;
+  lastName: string;
+  firstName: string;
+  birthDate: string;
+  sex: StudentSex;
+  classId: string | null;
+  className: string | null;
+  isRepeater: boolean;
+  action: 'create_student' | 'reuse_student';
+}
+
+export interface CsvImportSummary {
+  totalRows: number;
+  validRows: number;
+  errorCount: number;
+  studentsToCreate: number;
+  studentsReused: number;
+  enrollmentsToCreate: number;
+}
+
+export interface ImportStudentsCsvResult {
+  dryRun: boolean;
+  committed: boolean;
+  summary: CsvImportSummary;
+  errors: CsvRowValidationError[];
+  preview: CsvImportPreviewEntry[];
+  createdStudents: StudentDto[];
+  createdEnrollments: EnrollmentDto[];
+}
+
+function isPgUniqueViolation(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const record = err as { code?: unknown; cause?: { code?: unknown } };
+  return record.code === '23505' || record.cause?.code === '23505';
+}
+
+export async function importStudentsCsv(
+  db: DbClient,
+  input: ImportStudentsCsvInput,
+): Promise<ImportStudentsCsvResult> {
+  const parsedRows = parseStudentsCsv(input.csvContent, input.delimiter);
+
+  const runEvaluation = async (executor: DbClient) => {
+    let resolvedYearId: string | null = null;
+    let fixedClass: typeof classes.$inferSelect | null = null;
+    const classesByNormalizedName = new Map<string, Array<typeof classes.$inferSelect>>();
+
+    if (input.classId) {
+      const [cls] = await executor
+        .select()
+        .from(classes)
+        .where(eq(classes.id, input.classId))
+        .limit(1);
+
+      if (!cls) {
+        throw new NotFoundError('Classe introuvable.');
+      }
+
+      if (input.academicYearId && cls.academicYearId !== input.academicYearId) {
+        throw new BadRequestError(
+          'La classe sélectionnée n’appartient pas à cette année scolaire.',
+        );
+      }
+
+      fixedClass = cls;
+      resolvedYearId = cls.academicYearId;
+    } else if (input.academicYearId) {
+      const [year] = await executor
+        .select({ id: academicYears.id })
+        .from(academicYears)
+        .where(eq(academicYears.id, input.academicYearId))
+        .limit(1);
+
+      if (!year) {
+        throw new NotFoundError('Année scolaire introuvable.');
+      }
+
+      resolvedYearId = year.id;
+      const yearClasses = await executor
+        .select()
+        .from(classes)
+        .where(eq(classes.academicYearId, year.id));
+
+      for (const cls of yearClasses) {
+        const key = cls.name.trim().toLowerCase();
+        const list = classesByNormalizedName.get(key) ?? [];
+        list.push(cls);
+        classesByNormalizedName.set(key, list);
+      }
+    }
+
+    const errors: CsvRowValidationError[] = [];
+    const seenMatricules = new Map<string, number>();
+    const structurallyValidRows: Array<{
+      row: NormalizedCsvStudentRow;
+      targetClassId: string | null;
+      targetClassName: string | null;
+    }> = [];
+
+    for (const rawRow of parsedRows) {
+      const validated = validateParsedCsvRow(rawRow);
+      if (!validated.ok) {
+        errors.push(validated.error);
+        continue;
+      }
+
+      const row = validated.data;
+      const firstLineSeen = seenMatricules.get(row.matricule);
+      if (firstLineSeen !== undefined) {
+        errors.push({
+          line: row.line,
+          matricule: row.matricule,
+          field: 'matricule',
+          message: `Matricule "${row.matricule}" dupliqué dans le fichier CSV (déjà présent à la ligne ${firstLineSeen}).`,
+        });
+        continue;
+      }
+      seenMatricules.set(row.matricule, row.line);
+
+      let targetClassId: string | null = null;
+      let targetClassName: string | null = null;
+
+      if (fixedClass) {
+        if (
+          row.className &&
+          row.className.trim().toLowerCase() !== fixedClass.name.trim().toLowerCase()
+        ) {
+          errors.push({
+            line: row.line,
+            matricule: row.matricule,
+            field: 'className',
+            message: `La colonne classe "${row.className}" ne correspond pas à la classe cible "${fixedClass.name}".`,
+          });
+          continue;
+        }
+        targetClassId = fixedClass.id;
+        targetClassName = fixedClass.name;
+      } else if (resolvedYearId) {
+        if (row.className) {
+          const matches = classesByNormalizedName.get(row.className.trim().toLowerCase()) ?? [];
+          if (matches.length === 0) {
+            errors.push({
+              line: row.line,
+              matricule: row.matricule,
+              field: 'className',
+              message: `Classe "${row.className}" introuvable pour cette année scolaire.`,
+            });
+            continue;
+          }
+          if (matches.length > 1) {
+            errors.push({
+              line: row.line,
+              matricule: row.matricule,
+              field: 'className',
+              message: `Nom de classe ambigu "${row.className}" pour cette année scolaire.`,
+            });
+            continue;
+          }
+          targetClassId = matches[0]!.id;
+          targetClassName = matches[0]!.name;
+        }
+      } else if (row.className) {
+        errors.push({
+          line: row.line,
+          matricule: row.matricule,
+          field: 'className',
+          message: `Précisez classId ou academicYearId pour inscrire l’élève dans la classe "${row.className}".`,
+        });
+        continue;
+      }
+
+      structurallyValidRows.push({
+        row,
+        targetClassId,
+        targetClassName,
+      });
+    }
+
+    const candidateMatricules = structurallyValidRows.map((item) => item.row.matricule);
+    const existingStudentsList =
+      candidateMatricules.length > 0
+        ? await executor
+            .select()
+            .from(students)
+            .where(inArray(students.matricule, candidateMatricules))
+        : [];
+
+    const existingStudentByMatricule = new Map(
+      existingStudentsList.map((student) => [student.matricule, student]),
+    );
+
+    const existingStudentIds = existingStudentsList.map((s) => s.id);
+    const enrolledInYearSet = new Set<string>();
+    if (resolvedYearId && existingStudentIds.length > 0) {
+      const existingEnrollmentsList = await executor
+        .select({ studentId: enrollments.studentId })
+        .from(enrollments)
+        .where(
+          and(
+            eq(enrollments.academicYearId, resolvedYearId),
+            inArray(enrollments.studentId, existingStudentIds),
+          ),
+        );
+      for (const enr of existingEnrollmentsList) {
+        enrolledInYearSet.add(enr.studentId);
+      }
+    }
+
+    interface PlannedImportAction {
+      row: NormalizedCsvStudentRow;
+      action: 'create_student' | 'reuse_student';
+      existingStudent: StudentDto | null;
+      targetClassId: string | null;
+      targetClassName: string | null;
+    }
+
+    const plannedActions: PlannedImportAction[] = [];
+
+    for (const candidate of structurallyValidRows) {
+      const existingStudent = existingStudentByMatricule.get(candidate.row.matricule) ?? null;
+
+      if (existingStudent) {
+        if (!input.reuseExistingStudents) {
+          errors.push({
+            line: candidate.row.line,
+            matricule: candidate.row.matricule,
+            field: 'matricule',
+            message: `Un élève avec le matricule "${candidate.row.matricule}" existe déjà en base.`,
+          });
+          continue;
+        }
+
+        if (!candidate.targetClassId || !resolvedYearId) {
+          errors.push({
+            line: candidate.row.line,
+            matricule: candidate.row.matricule,
+            field: 'matricule',
+            message: `L’élève "${candidate.row.matricule}" existe déjà ; sélectionnez une classe cible pour le réinscrire.`,
+          });
+          continue;
+        }
+
+        if (enrolledInYearSet.has(existingStudent.id)) {
+          errors.push({
+            line: candidate.row.line,
+            matricule: candidate.row.matricule,
+            field: 'matricule',
+            message: `L’élève "${candidate.row.matricule}" est déjà inscrit pour cette année scolaire.`,
+          });
+          continue;
+        }
+
+        plannedActions.push({
+          row: candidate.row,
+          action: 'reuse_student',
+          existingStudent,
+          targetClassId: candidate.targetClassId,
+          targetClassName: candidate.targetClassName,
+        });
+      } else {
+        plannedActions.push({
+          row: candidate.row,
+          action: 'create_student',
+          existingStudent: null,
+          targetClassId: candidate.targetClassId,
+          targetClassName: candidate.targetClassName,
+        });
+      }
+    }
+
+    errors.sort((a, b) => a.line - b.line);
+
+    const summary: CsvImportSummary = {
+      totalRows: parsedRows.length,
+      validRows: plannedActions.length,
+      errorCount: errors.length,
+      studentsToCreate: plannedActions.filter((a) => a.action === 'create_student').length,
+      studentsReused: plannedActions.filter((a) => a.action === 'reuse_student').length,
+      enrollmentsToCreate: plannedActions.filter(
+        (a) => a.targetClassId !== null && resolvedYearId !== null,
+      ).length,
+    };
+
+    const preview: CsvImportPreviewEntry[] = plannedActions.map((a) => ({
+      line: a.row.line,
+      matricule: a.row.matricule,
+      lastName: a.row.lastName,
+      firstName: a.row.firstName,
+      birthDate: a.row.birthDate,
+      sex: a.row.sex,
+      classId: a.targetClassId,
+      className: a.targetClassName,
+      isRepeater: a.row.isRepeater,
+      action: a.action,
+    }));
+
+    return {
+      resolvedYearId,
+      plannedActions,
+      summary,
+      errors,
+      preview,
+    };
+  };
+
+  if (input.dryRun) {
+    const evaluated = await runEvaluation(db);
+    return {
+      dryRun: true,
+      committed: false,
+      summary: evaluated.summary,
+      errors: evaluated.errors,
+      preview: evaluated.preview,
+      createdStudents: [],
+      createdEnrollments: [],
+    };
+  }
+
+  try {
+    return await db.transaction(async (tx) => {
+      const txDb = tx as unknown as DbClient;
+      await acquireSyncWriteLock(txDb);
+
+      const evaluated = await runEvaluation(txDb);
+      if (evaluated.errors.length > 0) {
+        throw new ValidationError(
+          'Des erreurs ont été détectées dans le fichier CSV : aucune donnée n’a été importée.',
+          {
+            summary: evaluated.summary,
+            errors: evaluated.errors,
+          },
+        );
+      }
+
+      const now = new Date();
+      const createdStudents: StudentDto[] = [];
+      const createdEnrollments: EnrollmentDto[] = [];
+
+      for (const item of evaluated.plannedActions) {
+        let studentId: string;
+        if (item.action === 'create_student') {
+          const syncVersion = await nextSyncVersion(txDb);
+          const [createdStudent] = await tx
+            .insert(students)
+            .values({
+              matricule: item.row.matricule,
+              lastName: item.row.lastName,
+              firstName: item.row.firstName,
+              birthDate: item.row.birthDate,
+              birthPlace: item.row.birthPlace,
+              sex: item.row.sex,
+              syncVersion,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning();
+
+          if (!createdStudent) {
+            throw new Error('Échec d’insertion d’un élève lors de l’import CSV.');
+          }
+          createdStudents.push(createdStudent);
+          studentId = createdStudent.id;
+        } else {
+          studentId = item.existingStudent!.id;
+        }
+
+        if (item.targetClassId && evaluated.resolvedYearId) {
+          const enrollmentSyncVersion = await nextSyncVersion(txDb);
+          const [createdEnrollment] = await tx
+            .insert(enrollments)
+            .values({
+              studentId,
+              classId: item.targetClassId,
+              academicYearId: evaluated.resolvedYearId,
+              isRepeater: item.row.isRepeater,
+              status: 'active',
+              syncVersion: enrollmentSyncVersion,
+              enrolledAt: now,
+              updatedAt: now,
+            })
+            .returning();
+
+          if (!createdEnrollment) {
+            throw new Error('Échec d’insertion d’une inscription lors de l’import CSV.');
+          }
+          createdEnrollments.push(createdEnrollment);
+        }
+      }
+
+      return {
+        dryRun: false,
+        committed: true,
+        summary: evaluated.summary,
+        errors: [],
+        preview: [],
+        createdStudents,
+        createdEnrollments,
+      };
+    });
+  } catch (err) {
+    if (isPgUniqueViolation(err)) {
+      throw new ConflictError(
+        'Conflit d’unicité lors de l’import CSV (matricule ou inscription déjà existante).',
+      );
+    }
+    throw err;
+  }
+}
+

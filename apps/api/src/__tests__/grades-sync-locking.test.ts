@@ -1350,5 +1350,132 @@ describe('Grades, Offline Sync, Period Locking & Council Decisions', () => {
       });
       expect(subjectTeacherClassList.statusCode).toBe(403);
     });
+
+    it('lists period lock/unlock audit logs and council decision audit logs with filters, pagination, and RBAC', async () => {
+      // Lock & unlock sequence 1
+      const lockRes = await fx.app.inject({
+        method: 'POST',
+        url: `/api/periods/${fx.seq1Id}/lock`,
+        headers: { authorization: `Bearer ${fx.censorUser.token}` },
+        payload: { reason: 'Clôture normale S1' },
+      });
+      expect(lockRes.statusCode).toBe(200);
+
+      const unlockRes = await fx.app.inject({
+        method: 'POST',
+        url: `/api/periods/${fx.seq1Id}/unlock`,
+        headers: { authorization: `Bearer ${fx.principalUser.token}` },
+        payload: { reason: 'Correction erreur saisie S1' },
+      });
+      expect(unlockRes.statusCode).toBe(200);
+
+      // Upsert and then update council decision for Alice, plus create for Charlie
+      await fx.app.inject({
+        method: 'PUT',
+        url: '/api/council-decisions/bulk',
+        headers: { authorization: `Bearer ${fx.censorUser.token}` },
+        payload: {
+          decisions: [
+            {
+              enrollmentId: fx.enrAliceId,
+              periodId: fx.trimester1Id,
+              generalAppreciation: 'Bon début.',
+              decision: 'encouragement',
+              absencesHours: 3,
+            },
+            {
+              enrollmentId: fx.enrCharlieId,
+              periodId: fx.trimester1Id,
+              generalAppreciation: 'Passable.',
+              decision: 'none',
+              absencesHours: 5,
+            },
+          ],
+        },
+      });
+
+      await fx.app.inject({
+        method: 'PUT',
+        url: '/api/council-decisions/bulk',
+        headers: { authorization: `Bearer ${fx.principalUser.token}` },
+        payload: {
+          decisions: [
+            {
+              enrollmentId: fx.enrAliceId,
+              periodId: fx.trimester1Id,
+              generalAppreciation: 'Excellent après révision.',
+              decision: 'congratulations',
+              absencesHours: 1,
+            },
+          ],
+        },
+      });
+
+      // RBAC: teacher and secretary cannot inspect audit logs
+      for (const token of [fx.teacherMathUser.token, fx.secretaryUser.token]) {
+        const periodAuditForbidden = await fx.app.inject({
+          method: 'GET',
+          url: '/api/periods/audit',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(periodAuditForbidden.statusCode).toBe(403);
+
+        const councilAuditForbidden = await fx.app.inject({
+          method: 'GET',
+          url: '/api/council-decisions/audit',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(councilAuditForbidden.statusCode).toBe(403);
+      }
+
+      // Period audit logs filtered and paginated
+      const periodAuditAll = await fx.app.inject({
+        method: 'GET',
+        url: `/api/periods/audit?academicYearId=${fx.yearId}&periodId=${fx.seq1Id}`,
+        headers: { authorization: `Bearer ${fx.principalUser.token}` },
+      });
+      expect(periodAuditAll.statusCode).toBe(200);
+      const pLogs = periodAuditAll.json().logs;
+      expect(pLogs).toHaveLength(2);
+      expect(pLogs[0].action).toBe('unlocked');
+      expect(pLogs[0].reason).toBe('Correction erreur saisie S1');
+      expect(pLogs[0].periodCode).toBe('SEQ1');
+      expect(pLogs[0].academicYearLabel).toBe('2025-2026');
+      expect(pLogs[1].action).toBe('locked');
+
+      const periodAuditFiltered = await fx.app.inject({
+        method: 'GET',
+        url: `/api/periods/audit?action=locked&limit=1&offset=0`,
+        headers: { authorization: `Bearer ${fx.adminUser.token}` },
+      });
+      expect(periodAuditFiltered.statusCode).toBe(200);
+      expect(periodAuditFiltered.json().logs).toHaveLength(1);
+      expect(periodAuditFiltered.json().logs[0].action).toBe('locked');
+
+      // Council decision audit logs filtered by class/enrollment
+      const aliceCouncilLogsRes = await fx.app.inject({
+        method: 'GET',
+        url: `/api/council-decisions/audit?classId=${fx.class6AId}&enrollmentId=${fx.enrAliceId}`,
+        headers: { authorization: `Bearer ${fx.adminUser.token}` },
+      });
+      expect(aliceCouncilLogsRes.statusCode).toBe(200);
+      const cLogs = aliceCouncilLogsRes.json().logs;
+      expect(cLogs).toHaveLength(2);
+      expect(cLogs[0].previousDecision).toBe('encouragement');
+      expect(cLogs[0].newDecision).toBe('congratulations');
+      expect(cLogs[0].previousAbsencesHours).toBe(3);
+      expect(cLogs[0].newAbsencesHours).toBe(1);
+      expect(cLogs[0].className).toBe('6ème A');
+      expect(cLogs[1].previousDecision).toBeNull();
+      expect(cLogs[1].newDecision).toBe('encouragement');
+
+      const allCouncilPaginated = await fx.app.inject({
+        method: 'GET',
+        url: `/api/council-decisions/audit?academicYearId=${fx.yearId}&limit=1&offset=1`,
+        headers: { authorization: `Bearer ${fx.censorUser.token}` },
+      });
+      expect(allCouncilPaginated.statusCode).toBe(200);
+      expect(allCouncilPaginated.json().logs).toHaveLength(1);
+    });
   });
 });

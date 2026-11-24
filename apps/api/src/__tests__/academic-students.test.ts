@@ -928,4 +928,230 @@ describe('Academic Structure, Students/Enrollments, Subjects & Teacher Assignmen
     expect(taAllowed.json().assignments).toHaveLength(1);
     expect(taAllowed.json().assignments[0].subjectCode).toBe('FR');
   });
+
+  it('imports students & enrollments from CSV with dryRun, Excel FR format, reuseExistingStudents, atomic 422 validation, and RBAC', async () => {
+    const yearRes = await app.inject({
+      method: 'POST',
+      url: '/api/academic-years',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: {
+        label: '2032-2033',
+        startDate: '2032-09-01',
+        endDate: '2033-06-30',
+        isActive: false,
+        initializeCameroonDefaults: false,
+      },
+    });
+    expect(yearRes.statusCode).toBe(201);
+    const year27Id = yearRes.json().academicYear.id as string;
+
+    const cls4ARes = await app.inject({
+      method: 'POST',
+      url: '/api/classes',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: {
+        academicYearId: year27Id,
+        name: '4ème A',
+        level: '4ème',
+      },
+    });
+    const cls4BRes = await app.inject({
+      method: 'POST',
+      url: '/api/classes',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: {
+        academicYearId: year27Id,
+        name: '4ème B',
+        level: '4ème',
+      },
+    });
+    expect(cls4ARes.statusCode).toBe(201);
+    expect(cls4BRes.statusCode).toBe(201);
+    const cls4AId = cls4ARes.json().id as string;
+    const cls4BId = cls4BRes.json().id as string;
+
+    // RBAC: teacher and principal rejected (403)
+    const sampleCsv = [
+      '\uFEFFMatricule;Nom;Prénom;Date de naissance;Lieu de naissance;Sexe;Redoublant;Classe',
+      'CSV2701;"MBARGA, Junior";Paul;15/03/2013;Yaoundé;M;non;4ème A',
+      'CSV2702;ATANGANA;Claire;2013-07-22;Douala;F;oui;4ème B',
+      'CSV2703;FOTSO;Alain;04/11/2012;;M;;4ème A',
+    ].join('\r\n');
+
+    const teacherCsvRes = await app.inject({
+      method: 'POST',
+      url: '/api/students/import-csv',
+      headers: { authorization: `Bearer ${teacherA.token}` },
+      payload: { csvContent: sampleCsv, academicYearId: year27Id },
+    });
+    expect(teacherCsvRes.statusCode).toBe(403);
+
+    const principalCsvRes = await app.inject({
+      method: 'POST',
+      url: '/api/students/import-csv',
+      headers: { authorization: `Bearer ${principal.token}` },
+      payload: { csvContent: sampleCsv, academicYearId: year27Id },
+    });
+    expect(principalCsvRes.statusCode).toBe(403);
+
+    // Dry run returns summary and preview without writing to DB
+    const dryRunRes = await app.inject({
+      method: 'POST',
+      url: '/api/students/import-csv',
+      headers: { authorization: `Bearer ${secretary.token}` },
+      payload: {
+        csvContent: sampleCsv,
+        academicYearId: year27Id,
+        dryRun: true,
+      },
+    });
+    expect(dryRunRes.statusCode).toBe(200);
+    const dryBody = dryRunRes.json();
+    expect(dryBody.dryRun).toBe(true);
+    expect(dryBody.committed).toBe(false);
+    expect(dryBody.summary).toEqual({
+      totalRows: 3,
+      validRows: 3,
+      errorCount: 0,
+      studentsToCreate: 3,
+      studentsReused: 0,
+      enrollmentsToCreate: 3,
+    });
+    expect(dryBody.preview).toHaveLength(3);
+    expect(dryBody.preview[0].lastName).toBe('MBARGA, Junior');
+    expect(dryBody.preview[0].birthDate).toBe('2013-03-15');
+
+    const checkNotInserted = await app.inject({
+      method: 'GET',
+      url: '/api/students?q=CSV27',
+      headers: { authorization: `Bearer ${secretary.token}` },
+    });
+    expect(checkNotInserted.json().students).toHaveLength(0);
+
+    // Invalid CSV causes 422 atomic rejection (no partial writes)
+    const invalidCsv = [
+      'matricule;nom;prenom;date_naissance;sexe;classe',
+      'CSV2799;VALIDE;Ligne;10/01/2013;M;4ème A',
+      'CSV2798;DATEBAD;Test;31/02/2013;F;4ème A',
+      'CSV2799;DOUBLON;Ligne;11/01/2013;M;4ème A',
+    ].join('\n');
+
+    const invalidRes = await app.inject({
+      method: 'POST',
+      url: '/api/students/import-csv',
+      headers: { authorization: `Bearer ${censor.token}` },
+      payload: {
+        csvContent: invalidCsv,
+        academicYearId: year27Id,
+        dryRun: false,
+      },
+    });
+    expect(invalidRes.statusCode).toBe(422);
+    expect(invalidRes.json().error.code).toBe('VALIDATION_ERROR');
+    expect(invalidRes.json().error.details.errors).toHaveLength(2);
+
+    const checkAtomic = await app.inject({
+      method: 'GET',
+      url: '/api/students?q=CSV2799',
+      headers: { authorization: `Bearer ${secretary.token}` },
+    });
+    expect(checkAtomic.json().students).toHaveLength(0);
+
+    // Real commit via secretary across both classes
+    const commitRes = await app.inject({
+      method: 'POST',
+      url: '/api/students/import-csv',
+      headers: { authorization: `Bearer ${secretary.token}` },
+      payload: {
+        csvContent: sampleCsv,
+        academicYearId: year27Id,
+        dryRun: false,
+      },
+    });
+    expect(commitRes.statusCode).toBe(201);
+    const commitBody = commitRes.json();
+    expect(commitBody.committed).toBe(true);
+    expect(commitBody.createdStudents).toHaveLength(3);
+    expect(commitBody.createdEnrollments).toHaveLength(3);
+
+    const class4AStudents = await app.inject({
+      method: 'GET',
+      url: `/api/classes/${cls4AId}/students`,
+      headers: { authorization: `Bearer ${secretary.token}` },
+    });
+    expect(class4AStudents.json().students).toHaveLength(2);
+
+    const class4BStudents = await app.inject({
+      method: 'GET',
+      url: `/api/classes/${cls4BId}/students`,
+      headers: { authorization: `Bearer ${secretary.token}` },
+    });
+    expect(class4BStudents.json().students).toHaveLength(1);
+    expect(class4BStudents.json().students[0].isRepeater).toBe(true);
+
+    // Next year re-enrollment with reuseExistingStudents: true and fixed classId
+    const nextYearRes = await app.inject({
+      method: 'POST',
+      url: '/api/academic-years',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: {
+        label: '2033-2034',
+        startDate: '2033-09-01',
+        endDate: '2034-06-30',
+        isActive: false,
+        initializeCameroonDefaults: false,
+      },
+    });
+    expect(nextYearRes.statusCode).toBe(201);
+    const year28Id = nextYearRes.json().academicYear.id as string;
+
+    const cls3ARes = await app.inject({
+      method: 'POST',
+      url: '/api/classes',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: {
+        academicYearId: year28Id,
+        name: '3ème A',
+        level: '3ème',
+      },
+    });
+    const cls3AId = cls3ARes.json().id as string;
+
+    const reEnrollCsv = [
+      'matricule,lastName,firstName,birthDate,sex',
+      'CSV2701,MBARGA Junior,Paul,2013-03-15,M',
+      'CSV2804,NDONGO,Sonia,2013-09-12,F',
+    ].join('\n');
+
+    // Rejected when reuseExistingStudents is false
+    const rejectReuseRes = await app.inject({
+      method: 'POST',
+      url: '/api/students/import-csv',
+      headers: { authorization: `Bearer ${secretary.token}` },
+      payload: {
+        csvContent: reEnrollCsv,
+        classId: cls3AId,
+        reuseExistingStudents: false,
+      },
+    });
+    expect(rejectReuseRes.statusCode).toBe(422);
+
+    // Accepted when reuseExistingStudents is true (1 reused, 1 created, 2 enrollments)
+    const reuseRes = await app.inject({
+      method: 'POST',
+      url: '/api/students/import-csv',
+      headers: { authorization: `Bearer ${secretary.token}` },
+      payload: {
+        csvContent: reEnrollCsv,
+        classId: cls3AId,
+        reuseExistingStudents: true,
+      },
+    });
+    expect(reuseRes.statusCode).toBe(201);
+    expect(reuseRes.json().summary.studentsToCreate).toBe(1);
+    expect(reuseRes.json().summary.studentsReused).toBe(1);
+    expect(reuseRes.json().summary.enrollmentsToCreate).toBe(2);
+    expect(reuseRes.json().createdStudents).toHaveLength(1);
+    expect(reuseRes.json().createdEnrollments).toHaveLength(2);
+  });
 });
