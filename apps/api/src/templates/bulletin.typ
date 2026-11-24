@@ -61,8 +61,8 @@
   if d == none or d == "" {
     "—"
   } else {
-    let s = str(d)
-    let date-part = if s.len() >= 10 { s.slice(0, 10) } else { s }
+    let s = str(d).trim()
+    let date-part = s.split("T").at(0).split(" ").at(0)
     let parts = date-part.split("-")
     if parts.len() == 3 {
       parts.at(2) + "/" + parts.at(1) + "/" + parts.at(0)
@@ -276,8 +276,9 @@
     }
     let period-headers = if is-annual { tri-headers } else { seq-headers }
     let seq-count = period-headers.len()
+    let seq-col-width = if seq-count > 0 { calc.min(13mm, 58mm / seq-count) } else { 13mm }
     let total-cols = 1 + seq-count + 6
-    let col-widths = (1fr,) + period-headers.map(_ => 13mm) + (14mm, 11mm, 14mm, 12mm, 15mm, 25mm)
+    let col-widths = (1fr,) + period-headers.map(_ => seq-col-width) + (14mm, 11mm, 14mm, 12mm, 15mm, 24mm)
     let col-aligns = (left,) + period-headers.map(_ => right) + (right, center, right, center, right, left)
 
     let header-cells = (

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 
 const KEY_LEN = 64;
 const SCRYPT_N = 32768;
@@ -120,6 +120,9 @@ export function generateOpaqueToken(): string {
   return randomBytes(48).toString('base64url');
 }
 
-export function hashToken(token: string): string {
+export function hashToken(token: string, secret?: string): string {
+  if (secret) {
+    return createHmac('sha256', secret).update(token).digest('hex');
+  }
   return createHash('sha256').update(token).digest('hex');
 }

@@ -405,18 +405,24 @@ export async function listClassStudents(
   statusFilter?: EnrollmentStatus,
   pagination: PaginationQuery = { limit: 100, offset: 0 },
 ): Promise<ClassStudentDto[]> {
+  if (
+    currentUser.role !== 'teacher' &&
+    currentUser.role !== 'admin' &&
+    currentUser.role !== 'censor' &&
+    currentUser.role !== 'principal' &&
+    currentUser.role !== 'secretary'
+  ) {
+    throw new ForbiddenError('Accès refusé.');
+  }
+
   const [cls] = await db
     .select()
     .from(classes)
     .where(eq(classes.id, classId))
     .limit(1);
 
-  if (!cls) {
-    throw new NotFoundError('Classe introuvable.');
-  }
-
   if (currentUser.role === 'teacher') {
-    const isMainTeacher = cls.mainTeacherId === currentUser.id;
+    const isMainTeacher = cls?.mainTeacherId === currentUser.id;
     if (!isMainTeacher) {
       const [assignment] = await db
         .select({ id: teacherAssignments.id })
@@ -435,13 +441,10 @@ export async function listClassStudents(
         throw new ForbiddenError('Accès refusé : vous n’êtes pas affecté à cette classe.');
       }
     }
-  } else if (
-    currentUser.role !== 'admin' &&
-    currentUser.role !== 'censor' &&
-    currentUser.role !== 'principal' &&
-    currentUser.role !== 'secretary'
-  ) {
-    throw new ForbiddenError('Accès refusé.');
+  }
+
+  if (!cls) {
+    throw new NotFoundError('Classe introuvable.');
   }
 
   const conditions = statusFilter

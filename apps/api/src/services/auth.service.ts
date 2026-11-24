@@ -18,7 +18,7 @@ import {
   needsPasswordRehash,
   verifyPassword,
 } from '../lib/crypto.js';
-import { NotFoundError, UnauthorizedError } from '../lib/errors.js';
+import { BadRequestError, NotFoundError, UnauthorizedError } from '../lib/errors.js';
 
 const MAX_ACTIVE_SESSIONS_PER_USER = 10;
 const REVOKED_TOKEN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -71,6 +71,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
 
   async function login(input: unknown, signAccessToken: SignAccessTokenFn): Promise<AuthSessionResult> {
     const data = LoginSchema.parse(input);
+    const normalizedUsername = data.username.toLowerCase();
 
     const [user] = await db
       .select({
@@ -83,7 +84,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
         tokenVersion: users.tokenVersion,
       })
       .from(users)
-      .where(eq(users.username, data.username))
+      .where(sql`lower(${users.username}) = ${normalizedUsername}`)
       .limit(1);
 
     const targetHash = user ? user.passwordHash : await getDummyPasswordHash();
@@ -98,7 +99,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
       : null;
 
     const refreshToken = generateOpaqueToken();
-    const tokenHash = hashToken(refreshToken);
+    const tokenHash = hashToken(refreshToken, config.JWT_REFRESH_SECRET);
     const familyId = randomUUID();
     const now = new Date();
     const nowMs = now.getTime();
@@ -184,7 +185,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
 
   async function refresh(input: unknown, signAccessToken: SignAccessTokenFn): Promise<AuthSessionResult> {
     const data = RefreshTokenSchema.parse(input);
-    const tokenHash = hashToken(data.refreshToken);
+    const tokenHash = hashToken(data.refreshToken, config.JWT_REFRESH_SECRET);
 
     const [existingToken] = await db
       .select()
@@ -230,7 +231,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
     }
 
     const newRefreshToken = generateOpaqueToken();
-    const newTokenHash = hashToken(newRefreshToken);
+    const newTokenHash = hashToken(newRefreshToken, config.JWT_REFRESH_SECRET);
     const newTokenId = randomUUID();
     const newExpiresAt = new Date(
       Math.min(now.getTime() + refreshTtlMs, existingToken.sessionExpiresAt.getTime()),
@@ -285,7 +286,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
 
   async function logout(input: unknown): Promise<{ success: true }> {
     const data = LogoutSchema.parse(input);
-    const tokenHash = hashToken(data.refreshToken);
+    const tokenHash = hashToken(data.refreshToken, config.JWT_REFRESH_SECRET);
     const now = new Date();
 
     const [tokenRow] = await db
@@ -331,6 +332,7 @@ export function createAuthService(db: DbClient, config: AppConfig) {
     const [user] = await db
       .select({
         id: users.id,
+        username: users.username,
         passwordHash: users.passwordHash,
       })
       .from(users)
@@ -344,6 +346,10 @@ export function createAuthService(db: DbClient, config: AppConfig) {
     const passwordValid = await verifyPassword(data.currentPassword, user.passwordHash);
     if (!passwordValid) {
       throw new UnauthorizedError('Mot de passe actuel incorrect.');
+    }
+
+    if (data.newPassword.trim().toLowerCase() === user.username.trim().toLowerCase()) {
+      throw new BadRequestError('Le mot de passe ne peut pas être identique au nom d’utilisateur.');
     }
 
     const newPasswordHash = await hashPassword(data.newPassword);

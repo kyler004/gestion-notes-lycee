@@ -48,9 +48,18 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     webDistDir = path.resolve(__dirname, '../../../web/dist'),
   } = options;
 
+  const loggerConfig = logger
+    ? {
+        redact: {
+          paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+          censor: '[REDACTED]',
+        },
+      }
+    : false;
+
   const app = Fastify({
     trustProxy: parseTrustProxy(config.TRUST_PROXY),
-    logger,
+    logger: loggerConfig,
     bodyLimit: 2 * 1024 * 1024,
   });
 

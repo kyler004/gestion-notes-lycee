@@ -328,12 +328,13 @@ describe('Security Hardening Verification (Critical, High & Medium Remediations)
     let teacherToken: string;
 
     const commonPassword = 'ValidUserPass2026!';
+    const testConfig = createTestConfig();
 
     beforeAll(async () => {
       dbHandle = await createTestDb();
       app = await buildApp({
         db: dbHandle.db,
-        config: createTestConfig(),
+        config: testConfig,
         pdfRenderer: createStubPdfRenderer(),
         enableRateLimit: false,
       });
@@ -501,7 +502,7 @@ describe('Security Hardening Verification (Critical, High & Medium Remediations)
           sessionExpiresAt: new Date(Date.now() - 10_000),
           expiresAt: new Date(Date.now() + 86_400_000),
         })
-        .where(eq(refreshTokens.tokenHash, hashToken(rtActive)));
+        .where(eq(refreshTokens.tokenHash, hashToken(rtActive, testConfig.JWT_REFRESH_SECRET)));
 
       const cappedRefresh = await app.inject({
         method: 'POST',
@@ -2259,6 +2260,362 @@ setTimeout(() => {
         expect(paginatedStudents.statusCode).toBe(200);
         expect(paginatedStudents.json().students).toHaveLength(1);
         expect(paginatedStudents.json().students[0].lastName).toBe('Bello');
+      } finally {
+        await app.close();
+        await dbHandle.close();
+      }
+    });
+  });
+
+  describe('7. Low & Info Security Remediations (SEC-LOW-01..08, SEC-INFO-01..02)', () => {
+    it('SEC-LOW-01..08 & SEC-INFO-01: verifies sanitized Typst 500, password/token hygiene, case-insensitive uniqueness, role-change refresh revocation, hidden 403 roles, secretary user scope, partial active-year index, grading-rules semantics, 403-before-404, and HMAC refresh pepper', async () => {
+      const dbHandle = await createTestDb();
+      const config = createTestConfig();
+      const app = await buildApp({
+        db: dbHandle.db,
+        config,
+        pdfRenderer: createStubPdfRenderer(),
+        enableRateLimit: false,
+      });
+      await app.ready();
+
+      try {
+        const pw = await hashPassword('StrongPass2026!');
+        const [adminUser, teacherUser, secretaryUser] = await dbHandle.db
+          .insert(users)
+          .values([
+            {
+              username: 'low.admin',
+              email: 'Low.Admin@Lycee.cm',
+              fullName: 'Admin Low',
+              role: 'admin',
+              passwordHash: pw,
+            },
+            {
+              username: 'low.teacher',
+              email: 'low.teacher@lycee.cm',
+              fullName: 'Teacher Low',
+              role: 'teacher',
+              passwordHash: pw,
+            },
+            {
+              username: 'low.secretary',
+              email: 'low.sec@lycee.cm',
+              fullName: 'Secretary Low',
+              role: 'secretary',
+              passwordHash: pw,
+            },
+          ])
+          .returning();
+
+        const adminToken = app.jwt.sign({ sub: adminUser!.id, ver: adminUser!.tokenVersion });
+        const teacherToken = app.jwt.sign({ sub: teacherUser!.id, ver: teacherUser!.tokenVersion });
+        const secretaryToken = app.jwt.sign({
+          sub: secretaryUser!.id,
+          ver: secretaryUser!.tokenVersion,
+        });
+
+        // SEC-LOW-01: TypstPdfRenderer never exposes stderr or OS temp paths in thrown error
+        const workDir = await mkdtemp(path.join(os.tmpdir(), 'lycee-low01-'));
+        const failingTypst = path.join(workDir, 'fail-typst.mjs');
+        await writeFile(
+          failingTypst,
+          `#!/usr/bin/env node\nconsole.error('/tmp/secret-path-leak: fatal typst error');\nprocess.exit(1);\n`,
+          'utf8',
+        );
+        await chmod(failingTypst, 0o755);
+        try {
+          const renderer = new TypstPdfRenderer(failingTypst);
+          await expect(
+            renderer.renderClassList({
+              school: {
+                name: 'Lycée',
+                motto: '',
+                country: 'Cameroun',
+                ministry: 'MINESEC',
+                region: '',
+                delegation: '',
+                city: '',
+                phone: '',
+                email: '',
+                hasLogo: false,
+                logoMimeType: null,
+                logoBase64DataUri: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=', // SEC-LOW-02 ignored
+              },
+              academicYearLabel: '2026-2027',
+              classInfo: {
+                id: randomUUID(),
+                name: '6ème A',
+                level: '6ème',
+                series: null,
+                mainTeacherName: null,
+              },
+              generatedAt: new Date().toISOString(),
+              students: [],
+            }),
+          ).rejects.toMatchObject({
+            statusCode: 500,
+            code: 'PDF_GENERATION_FAILED',
+            message: 'Échec de la génération PDF. Veuillez réessayer ultérieurement.',
+          });
+        } finally {
+          await rm(workDir, { recursive: true, force: true });
+        }
+
+        // SEC-LOW-05: Password policy (min 10, alphanumeric, != currentPassword, != username) & refresh token regex
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/api/users',
+              headers: { authorization: `Bearer ${adminToken}` },
+              payload: {
+                username: 'shortpw.user',
+                fullName: 'Short Pw',
+                role: 'teacher',
+                password: 'Short123', // 8 chars < 10
+              },
+            })
+          ).statusCode,
+        ).toBe(400);
+
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/api/users',
+              headers: { authorization: `Bearer ${adminToken}` },
+              payload: {
+                username: 'onlyletters.user',
+                fullName: 'Only Letters',
+                role: 'teacher',
+                password: 'OnlyLettersPassword!', // no digit
+              },
+            })
+          ).statusCode,
+        ).toBe(400);
+
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/api/users',
+              headers: { authorization: `Bearer ${adminToken}` },
+              payload: {
+                username: 'SameName2026',
+                fullName: 'Same Name',
+                role: 'teacher',
+                password: 'samename2026',
+              },
+            })
+          ).statusCode,
+        ).toBe(400);
+
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/api/auth/refresh',
+              payload: { refreshToken: 'short-invalid-token!' },
+            })
+          ).statusCode,
+        ).toBe(400);
+
+        // Case-insensitive username login & duplicate rejection (SEC-LOW-05)
+        const caseLogin = await app.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: { username: 'LOW.TEACHER', password: 'StrongPass2026!' },
+        });
+        expect(caseLogin.statusCode).toBe(200);
+        const teacherRt = (caseLogin.json() as { refreshToken: string }).refreshToken;
+
+        // SEC-INFO-01: refresh token is stored HMAC-peppered with JWT_REFRESH_SECRET (not plain SHA-256)
+        const [plainHashRow] = await dbHandle.db
+          .select()
+          .from(refreshTokens)
+          .where(eq(refreshTokens.tokenHash, hashToken(teacherRt)));
+        expect(plainHashRow).toBeUndefined();
+        const [hmacHashRow] = await dbHandle.db
+          .select()
+          .from(refreshTokens)
+          .where(eq(refreshTokens.tokenHash, hashToken(teacherRt, config.JWT_REFRESH_SECRET)));
+        expect(hmacHashRow).toBeDefined();
+
+        // Duplicate username differing only by case -> 409
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/api/users',
+              headers: { authorization: `Bearer ${adminToken}` },
+              payload: {
+                username: 'LOW.ADMIN',
+                fullName: 'Dup Case',
+                role: 'teacher',
+                password: 'ValidPassword2026!',
+              },
+            })
+          ).statusCode,
+        ).toBe(409);
+
+        // SEC-LOW-06: ForbiddenError does NOT leak allowed roles list
+        const forbiddenRes = await app.inject({
+          method: 'POST',
+          url: '/api/users',
+          headers: { authorization: `Bearer ${teacherToken}` },
+          payload: {
+            username: 'denied.user',
+            fullName: 'Denied',
+            role: 'teacher',
+            password: 'ValidPassword2026!',
+          },
+        });
+        expect(forbiddenRes.statusCode).toBe(403);
+        expect(forbiddenRes.json().error.message).not.toContain('admin');
+        expect(forbiddenRes.json().error.message).not.toContain('censor');
+
+        // SEC-LOW-06: Secretary GET /api/users sees only teachers and gets 403 for ?role=admin
+        const secDefaultUsers = await app.inject({
+          method: 'GET',
+          url: '/api/users',
+          headers: { authorization: `Bearer ${secretaryToken}` },
+        });
+        expect(secDefaultUsers.statusCode).toBe(200);
+        const secUserRows = secDefaultUsers.json() as Array<{ role: string }>;
+        expect(secUserRows.length).toBeGreaterThanOrEqual(1);
+        expect(secUserRows.every((u) => u.role === 'teacher')).toBe(true);
+
+        expect(
+          (
+            await app.inject({
+              method: 'GET',
+              url: '/api/users?role=admin',
+              headers: { authorization: `Bearer ${secretaryToken}` },
+            })
+          ).statusCode,
+        ).toBe(403);
+
+        // SEC-LOW-06: Role change revokes active refresh tokens immediately
+        const roleChangeRes = await app.inject({
+          method: 'PATCH',
+          url: `/api/users/${teacherUser!.id}`,
+          headers: { authorization: `Bearer ${adminToken}` },
+          payload: { role: 'secretary' },
+        });
+        expect(roleChangeRes.statusCode).toBe(200);
+
+        const refreshAfterRoleChange = await app.inject({
+          method: 'POST',
+          url: '/api/auth/refresh',
+          payload: { refreshToken: teacherRt },
+        });
+        expect(refreshAfterRoleChange.statusCode).toBe(401);
+
+        // Restore role back to teacher for 403-before-404 test
+        await app.inject({
+          method: 'PATCH',
+          url: `/api/users/${teacherUser!.id}`,
+          headers: { authorization: `Bearer ${adminToken}` },
+          payload: { role: 'teacher' },
+        });
+        const [refreshedTeacher] = await dbHandle.db
+          .select({ tokenVersion: users.tokenVersion })
+          .from(users)
+          .where(eq(users.id, teacherUser!.id));
+        const newTeacherToken = app.jwt.sign({
+          sub: teacherUser!.id,
+          ver: refreshedTeacher!.tokenVersion,
+        });
+
+        // SEC-LOW-08: listClassStudents & listClassSubjects return 403 (not 404) for teacher probing non-existent class UUID
+        const nonExistentClassId = randomUUID();
+        expect(
+          (
+            await app.inject({
+              method: 'GET',
+              url: `/api/classes/${nonExistentClassId}/students`,
+              headers: { authorization: `Bearer ${newTeacherToken}` },
+            })
+          ).statusCode,
+        ).toBe(403);
+        expect(
+          (
+            await app.inject({
+              method: 'GET',
+              url: `/api/classes/${nonExistentClassId}/subjects`,
+              headers: { authorization: `Bearer ${newTeacherToken}` },
+            })
+          ).statusCode,
+        ).toBe(403);
+
+        // SEC-LOW-07: Partial unique index prevents two active academic years at DB level
+        const [yActive] = await dbHandle.db
+          .insert(academicYears)
+          .values({
+            label: '2035-2036',
+            startDate: '2035-09-01',
+            endDate: '2036-06-30',
+            isActive: true,
+          })
+          .returning();
+
+        await expect(
+          dbHandle.db.insert(academicYears).values({
+            label: '2036-2037',
+            startDate: '2036-09-01',
+            endDate: '2037-06-30',
+            isActive: true,
+          }),
+        ).rejects.toThrow();
+
+        // SEC-LOW-08: GradingRulesSchema semantic checks (weights parity, thresholds order, band overlaps)
+        expect(
+          (
+            await app.inject({
+              method: 'PUT',
+              url: `/api/academic-years/${yActive!.id}/grading-rules`,
+              headers: { authorization: `Bearer ${adminToken}` },
+              payload: {
+                ...CAMEROON_DEFAULT_GRADING_RULES,
+                sequencesPerTrimester: 2,
+                sequenceWeights: [1, 1, 1], // mismatch
+              },
+            })
+          ).statusCode,
+        ).toBe(400);
+
+        expect(
+          (
+            await app.inject({
+              method: 'PUT',
+              url: `/api/academic-years/${yActive!.id}/grading-rules`,
+              headers: { authorization: `Bearer ${adminToken}` },
+              payload: {
+                ...CAMEROON_DEFAULT_GRADING_RULES,
+                passingThreshold: 14,
+                honorRollThreshold: 12, // invalid order
+              },
+            })
+          ).statusCode,
+        ).toBe(400);
+
+        expect(
+          (
+            await app.inject({
+              method: 'PUT',
+              url: `/api/academic-years/${yActive!.id}/grading-rules`,
+              headers: { authorization: `Bearer ${adminToken}` },
+              payload: {
+                ...CAMEROON_DEFAULT_GRADING_RULES,
+                appreciationScale: [
+                  { min: 0, max: 10, label: 'A' },
+                  { min: 10, max: 20, label: 'B' }, // overlap at 10
+                ],
+              },
+            })
+          ).statusCode,
+        ).toBe(400);
       } finally {
         await app.close();
         await dbHandle.close();

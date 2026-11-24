@@ -9,7 +9,7 @@ export async function registerUsersRoutes(app: FastifyInstance, deps: { db: DbCl
     '/api/users',
     { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])] },
     async (request) => {
-      return usersService.listUsers(request.query);
+      return usersService.listUsers(request.query, request.currentUser);
     },
   );
 

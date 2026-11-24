@@ -130,46 +130,51 @@ sequenceDiagram
 
 ### 4.2 Verrouillage de séquence et génération de bulletins
 
-1. Le **Censeur / Administrateur** contrôle la complétude des saisies par classe et matière.
-2. Le **verrouillage d'une séquence** s'effectue en ligne dans une transaction PostgreSQL :
-   - Marque la période comme verrouillée (`locked_at`, `locked_by`).
-   - Calcule et fige le snapshot officiel des moyennes par matière, moyennes générales, rangs et statistiques de classe (tout en gardant le calcul reproductible par `@lycee/shared`).
-3. Le **Secrétariat** ou le **Proviseur** génère le bulletin PDF (individuel ou classe complète) via `GET /api/reports/...` : `Fastify` assemble les données verrouillées, invoque `typst` en mémoire/temp, renvoie le PDF avec en-têtes de cache et le stocke côté PWA pour réimpression hors-ligne.
+1. Le **Censeur / Administrateur / Proviseur** contrôle la complétude des saisies par classe et matière.
+2. Le **verrouillage d'une période** (séquence ou trimestre) s'effectue en ligne dans une transaction PostgreSQL (`FOR UPDATE` + verrou consultatif) :
+   - Marque la période comme verrouillée (`locked_at`, `locked_by`) et journalise l'opération dans `period_audit_logs`.
+   - Calcule et fige le snapshot officiel des moyennes par matière (`period_subject_results`), moyennes générales, rangs et statistiques (`period_student_results`) tout en gardant le calcul reproductible par `@lycee/shared`.
+   - En cas d'erreur constatée après validation, un **déverrouillage exceptionnel** (réservé `admin` / `principal` avec motif obligatoire) purge les snapshots associés et journalise l'action dans `period_audit_logs`.
+3. Le **Secrétariat**, la **Direction** ou le **Professeur principal** génère les bulletins PDF (séquentiels, trimestriels ou annuels, individuels ou par classe) via `GET /api/reports/...` : `Fastify` assemble les données (snapshots verrouillés ou calcul à la volée), invoque `typst` en répertoire isolé `--root`, renvoie le PDF avec `Cache-Control: private, no-store` et `ETag` canonique (le client PWA gérant le cache hors-ligne de façon cloisonnée par utilisateur).
 
 ---
 
 ## 5. Modèle conceptuel des données principales
 
-Le schéma PostgreSQL (géré via Drizzle ORM) s'articule autour des entités suivantes :
+Le schéma PostgreSQL (**21 tables** + séquence globale `sync_seq`, géré via Drizzle ORM avec contraintes `CHECK`, `ON DELETE RESTRICT` sur les données métier/audit et migrations sérialisées par verrou consultatif) s'articule autour des entités suivantes *(détail complet dans [`backend-api.md`](./backend-api.md))* :
 
 - **Établissement & configuration** :
-  - `school_profile` : nom, devise, ville/délégation, année active, logo binaire (`bytea`).
-  - `academic_years` : années scolaires, statut actif/archivé.
+  - `school_profile` : singleton (`id = 1`), nom, devise, ville/délégation, année active, logo binaire (`bytea`) validé par magic bytes PNG/JPEG.
+  - `academic_years` : années scolaires, statut actif/archivé (index unique partiel sur `is_active = true`).
   - `grading_rules` : configuration des périodes par année, pondérations, seuils d'appréciations, seuils de tableau d'honneur et de passage (pré-remplis au standard camerounais).
-  - `periods` : trimestres et séquences rattachées, statut (`open`, `locked`), horodatage de verrouillage.
+  - `periods` & `period_audit_logs` : trimestres et séquences rattachées, statut (`open`, `locked`), horodatage et historique complet des verrouillages/déverrouillages.
 - **Structure pédagogique** :
-  - `classes` : niveau, série/filière, libellé, effectif.
-  - `students` : matricule unique, nom, prénom, date de naissance, sexe, statut redoublant.
-  - `enrollments` : inscription d'un élève dans une classe pour une année scolaire.
+  - `classes` : niveau, série/filière, libellé, professeur principal (`main_teacher_id`).
+  - `students` : matricule unique, nom, prénom, date de naissance, sexe (création unitaire ou import CSV atomique en masse).
+  - `enrollments` : inscription d'un élève dans une classe pour une année scolaire, statut redoublant.
   - `subject_groups` & `subjects` : matières et groupes (ex. Groupe 1, 2, 3).
-  - `class_subjects` : coefficients des matières par classe.
-- **Utilisateurs & droits** :
-  - `users` : identifiants, mot de passe hashé (Argon2/scrypt), rôle (`admin`, `censor`, `principal`, `teacher`, `secretary`), statut actif.
-  - `teacher_assignments` : affectation `(enseignant, classe, matière, année scolaire)`.
-- **Notes, audit & bulletins** :
-  - `assessments` / `grades` : notes sur `20`, statut (`present`, `absent`, `excused`), clé d'idempotence `operation_id`, version/horodatage pour delta sync.
-  - `grade_audit_logs` : ancienne valeur, nouvelle valeur, auteur, motif, horodatage client et serveur.
-  - `council_decisions` : appréciations générales et décisions du conseil de classe par élève et période.
+  - `class_subjects` : coefficients des matières par classe (`0.01..20`).
+- **Utilisateurs & sessions** :
+  - `users` : identifiants (unicité insensible à la casse `lower()`), mot de passe haché (`scrypt` `N=32768, r=8, p=1`), rôle (`admin`, `censor`, `principal`, `teacher`, `secretary`), statut actif et `token_version`.
+  - `refresh_tokens` : jetons opaques hachés en HMAC-SHA256 avec détection de réutilisation par `family_id` et plafond absolu `session_expires_at`.
+  - `teacher_assignments` : affectation `(enseignant, classe, matière, année scolaire)` avec désactivation logique `is_active`.
+- **Notes, synchronisation, audit & bulletins** :
+  - `grades` : notes sur `20`, statut (`present`, `absent`, `excused`), horodatage et `sync_version` indexé sur `sync_seq`.
+  - `sync_operations` : table d'idempotence Outbox indexée par clé primaire composite `(user_id, operation_id)`.
+  - `grade_audit_logs` : ancienne valeur, nouvelle valeur, auteur, motif obligatoire sur modification, identifiant d'opération et horodatage serveur.
+  - `council_decisions` & `council_decision_audit_logs` : appréciations générales, heures d'absence, décisions du conseil et leur historique complet.
+  - `period_student_results` & `period_subject_results` : snapshots officiels figés lors du verrouillage.
 
 ---
 
 ## 6. Stratégie de qualité et de tests
 
-La fiabilité des calculs étant l'exigence centrale du projet :
+La fiabilité des calculs, de la synchronisation et du rendu PDF repose sur une vérification multi-couches :
 
-- **Tests unitaires critiques (`Vitest`)** : couverture complète de `@lycee/shared` (arrondis, coefficients, gestion des absences/notes manquantes, ex æquo dans les rangs, moyennes trimestrielles et annuelles).
-- **Tests d'intégration API & synchronisation** : vérification du cloisonnement RBAC, de l'idempotence de l'Outbox (double envoi sans doublon), du rejet des mutations sur séquence verrouillée et de l'écriture systématique dans `grade_audit_logs`.
-- **Contrôle de qualité statique** : TypeScript `strict: true` sur tout le monorepo, validation `Zod` aux frontières API et IndexedDB.
+- **Tests unitaires critiques (`Vitest`)** : couverture complète de `@lycee/shared` (arrondis, coefficients, gestion des absences/notes manquantes, ex æquo dans les rangs, moyennes séquentielles, trimestrielles et annuelles) et des composants PWA (`@lycee/web`).
+- **Tests d'intégration API, sécurité & synchronisation** : exécution sur PostgreSQL embarqué (`PGlite`) + `Fastify` couvrant le cloisonnement RBAC/BOLA, la résistance anti-TOCTOU, l'idempotence de l'Outbox, l'immutabilité post-verrouillage, l'import CSV, la génération Typst réelle (`REQUIRE_REAL_TYPST=1` en CI) et les 39 scénarios de durcissement sécurité (`apps/api/src/__tests__/security-hardening.test.ts`).
+- **Tests bout en bout navigateur (`Playwright` + Chromium)** : validation PWA complète (installation Service Worker, saisie hors-ligne, déverrouillage PIN, synchronisation, validation et téléchargement PDF réel).
+- **Contrôle de qualité statique & schéma** : TypeScript `strict: true` sur tout le monorepo, validation `Zod` aux frontières API/IndexedDB et contrôle de cohérence Drizzle (`pnpm db:check`).
 
 ---
 

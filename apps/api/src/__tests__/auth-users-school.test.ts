@@ -238,11 +238,11 @@ describe('Auth, Users, School & Seed module', () => {
       const [rt1Row] = await db
         .select()
         .from(refreshTokens)
-        .where(eq(refreshTokens.tokenHash, hashToken(rt1)));
+        .where(eq(refreshTokens.tokenHash, hashToken(rt1, config.JWT_REFRESH_SECRET)));
       const [rt2Row] = await db
         .select()
         .from(refreshTokens)
-        .where(eq(refreshTokens.tokenHash, hashToken(rt2)));
+        .where(eq(refreshTokens.tokenHash, hashToken(rt2, config.JWT_REFRESH_SECRET)));
       expect(rt1Row?.revokedAt).not.toBeNull();
       expect(rt1Row?.replacedById).toBe(rt2Row?.id);
       expect(rt1Row?.familyId).toBe(rt2Row?.familyId);
@@ -265,7 +265,7 @@ describe('Auth, Users, School & Seed module', () => {
       const [rt2AfterReuse] = await db
         .select()
         .from(refreshTokens)
-        .where(eq(refreshTokens.tokenHash, hashToken(rt2)));
+        .where(eq(refreshTokens.tokenHash, hashToken(rt2, config.JWT_REFRESH_SECRET)));
       expect(rt2AfterReuse?.revokedAt).not.toBeNull();
     });
 
@@ -296,7 +296,7 @@ describe('Auth, Users, School & Seed module', () => {
       await db
         .update(refreshTokens)
         .set({ expiresAt: new Date(Date.now() - 60_000) })
-        .where(eq(refreshTokens.tokenHash, hashToken(s2.body.refreshToken)));
+        .where(eq(refreshTokens.tokenHash, hashToken(s2.body.refreshToken, config.JWT_REFRESH_SECRET)));
 
       const expiredRefresh = await app.inject({
         method: 'POST',

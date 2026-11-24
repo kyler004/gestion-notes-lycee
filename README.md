@@ -83,7 +83,12 @@ gestion-notes-lycee/
 ├── packages/
 │   └── shared/           # Types partagés, schémas Zod et moteur de calcul des moyennes/rangs
 ├── docs/
-│   └── architecture.md   # Document d'architecture et décisions techniques (ADR)
+│   ├── README.md             # Index central de la documentation
+│   ├── architecture.md       # Document d'architecture et décisions techniques (ADR)
+│   ├── backend-api.md        # Référence API HTTP (69 endpoints), schéma DB & services
+│   ├── backend-securite.md   # Bilan complet d'audit et durcissement sécurité (39/39)
+│   └── frontend/
+│       └── design-system.md  # Design system officiel de la PWA
 ├── Dockerfile            # Conteneur unique servant API + Typst + assets PWA
 └── pnpm-workspace.yaml
 ```

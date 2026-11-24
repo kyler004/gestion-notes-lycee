@@ -1,0 +1,3 @@
+CREATE UNIQUE INDEX "academic_years_single_active_uidx" ON "academic_years" USING btree ("is_active") WHERE "academic_years"."is_active" = true;--> statement-breakpoint
+CREATE UNIQUE INDEX "users_username_lower_uidx" ON "users" USING btree (lower("username"));--> statement-breakpoint
+CREATE UNIQUE INDEX "users_email_lower_uidx" ON "users" USING btree (lower("email")) WHERE "users"."email" IS NOT NULL;

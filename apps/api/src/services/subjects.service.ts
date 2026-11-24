@@ -280,18 +280,24 @@ export async function listClassSubjects(
   currentUser: AuthUserPayload,
   pagination: PaginationQuery = { limit: 100, offset: 0 },
 ): Promise<ClassSubjectDetailDto[]> {
+  if (
+    currentUser.role !== 'teacher' &&
+    currentUser.role !== 'admin' &&
+    currentUser.role !== 'censor' &&
+    currentUser.role !== 'principal' &&
+    currentUser.role !== 'secretary'
+  ) {
+    throw new ForbiddenError('Accès refusé.');
+  }
+
   const [cls] = await db
     .select({ id: classes.id, mainTeacherId: classes.mainTeacherId })
     .from(classes)
     .where(eq(classes.id, classId))
     .limit(1);
 
-  if (!cls) {
-    throw new NotFoundError('Classe introuvable.');
-  }
-
   if (currentUser.role === 'teacher') {
-    if (cls.mainTeacherId !== currentUser.id) {
+    if (cls?.mainTeacherId !== currentUser.id) {
       const [assignment] = await db
         .select({ id: teacherAssignments.id })
         .from(teacherAssignments)
@@ -309,13 +315,10 @@ export async function listClassSubjects(
         throw new ForbiddenError('Accès refusé : vous n’êtes pas affecté à cette classe.');
       }
     }
-  } else if (
-    currentUser.role !== 'admin' &&
-    currentUser.role !== 'censor' &&
-    currentUser.role !== 'principal' &&
-    currentUser.role !== 'secretary'
-  ) {
-    throw new ForbiddenError('Accès refusé.');
+  }
+
+  if (!cls) {
+    throw new NotFoundError('Classe introuvable.');
   }
 
   const rows = await db
