@@ -6,7 +6,9 @@ Ce répertoire centralise la documentation technique et fonctionnelle du projet.
 
 | Document | Langue | Date | Responsable | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| [`architecture.md`](./architecture.md) | FR | 2026-11-20 | Équipe projet | Architecture technique globale et décisions d'architecture (ADR). |
+| [`architecture.md`](./architecture.md) | FR | 2026-11-24 | Équipe projet | Architecture technique globale et décisions d'architecture (ADR). |
+| [`backend-api.md`](./backend-api.md) | FR | 2026-11-24 | Équipe backend | Référence complète du backend MVP (69 endpoints, schéma PostgreSQL/Drizzle, CSV, rapports annuels, sync offline & Typst). |
+| [`backend-securite.md`](./backend-securite.md) | FR | 2026-11-24 | Équipe backend & sécurité | Bilan de l'audit de sécurité (39/39 constats résolus), défense en profondeur et remédiations Critiques à Info. |
 | [`frontend/design-system.md`](./frontend/design-system.md) | FR | 2026-11-20 | Équipe frontend | Design system officiel et exclusif du client PWA (palette, typographie, icônes, composants). |
 | [`frontend/`](./frontend/) | — | 2026-11-20 | Équipe frontend | Dossier réservé aux documents du client PWA (ajoutés sur demande). |
 
