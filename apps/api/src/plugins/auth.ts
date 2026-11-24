@@ -106,7 +106,7 @@ export const authPlugin = fp<AuthPluginOptions>(async (app: FastifyInstance, opt
     return async (request: FastifyRequest) => {
       await app.authenticate(request, undefined as unknown as FastifyReply);
       if (!roles.includes(request.currentUser.role)) {
-        throw new ForbiddenError(`Rôle insuffisant. Rôles autorisés : ${roles.join(', ')}`);
+        throw new ForbiddenError('Action non autorisée pour ce rôle.');
       }
     };
   });

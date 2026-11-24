@@ -42,9 +42,25 @@ const pdfRateLimitConfig = {
   },
 };
 
+function canonicalStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalStringify(item)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalStringify(record[key])}`).join(',')}}`;
+}
+
 function computePayloadEtag(payload: { generatedAt?: string }): string {
   const { generatedAt: _ignoredGeneratedAt, ...deterministicPayload } = payload;
-  const hash = createHash('sha256').update(JSON.stringify(deterministicPayload)).digest('hex');
+  const hash = createHash('sha256')
+    .update(canonicalStringify(deterministicPayload))
+    .digest('hex');
   return `"${hash}"`;
 }
 
@@ -72,7 +88,7 @@ function sendPdfResponse(
 ): FastifyReply {
   return reply
     .header('Content-Type', 'application/pdf')
-    .header('Cache-Control', 'private, max-age=300')
+    .header('Cache-Control', 'private, no-store')
     .header('ETag', etag)
     .header('Content-Disposition', `inline; filename="${fileName}"`)
     .send(pdfBuffer);
@@ -81,7 +97,7 @@ function sendPdfResponse(
 function sendNotModifiedResponse(reply: FastifyReply, etag: string): FastifyReply {
   return reply
     .header('ETag', etag)
-    .header('Cache-Control', 'private, max-age=300')
+    .header('Cache-Control', 'private, no-store')
     .code(304)
     .send();
 }

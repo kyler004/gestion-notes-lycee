@@ -73,6 +73,16 @@ export function registerErrorHandler(app: FastifyInstance): void {
       });
     }
 
+    const pgErr = error as { code?: unknown; cause?: { code?: unknown } };
+    if (pgErr.code === '23505' || pgErr.cause?.code === '23505') {
+      return reply.status(409).send({
+        error: {
+          code: 'CONFLICT',
+          message: 'Conflit de données : une ressource identique existe déjà.',
+        },
+      });
+    }
+
     const fastifyErr = error as { statusCode?: number; code?: string; message?: string };
     if (fastifyErr.statusCode && fastifyErr.statusCode < 500) {
       return reply.status(fastifyErr.statusCode).send({

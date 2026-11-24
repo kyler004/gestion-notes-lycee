@@ -7,18 +7,81 @@ export const AppreciationBandSchema = z.object({
   label: z.string().trim().min(1).max(64),
 });
 
-export const GradingRulesSchema = z.object({
-  trimestersCount: z.number().int().min(1).max(4).default(3),
-  sequencesPerTrimester: z.number().int().min(1).max(4).default(2),
-  sequenceWeights: z.array(z.number().finite().positive().max(100)).min(1).max(4),
-  trimesterWeights: z.array(z.number().finite().positive().max(100)).min(1).max(4),
-  passingThreshold: z.number().finite().min(0).max(20).default(10),
-  honorRollThreshold: z.number().finite().min(0).max(20).default(12),
-  encouragementThreshold: z.number().finite().min(0).max(20).default(13),
-  congratulationThreshold: z.number().finite().min(0).max(20).default(15),
-  treatAbsentAsZero: z.boolean().default(true),
-  appreciationScale: z.array(AppreciationBandSchema).min(1),
-});
+export const GradingRulesSchema = z
+  .object({
+    trimestersCount: z.number().int().min(1).max(4).default(3),
+    sequencesPerTrimester: z.number().int().min(1).max(4).default(2),
+    sequenceWeights: z.array(z.number().finite().positive().max(100)).min(1).max(4),
+    trimesterWeights: z.array(z.number().finite().positive().max(100)).min(1).max(4),
+    passingThreshold: z.number().finite().min(0).max(20).default(10),
+    honorRollThreshold: z.number().finite().min(0).max(20).default(12),
+    encouragementThreshold: z.number().finite().min(0).max(20).default(13),
+    congratulationThreshold: z.number().finite().min(0).max(20).default(15),
+    treatAbsentAsZero: z.boolean().default(true),
+    appreciationScale: z.array(AppreciationBandSchema).min(1),
+  })
+  .superRefine((val, ctx) => {
+    if (val.sequenceWeights.length !== val.sequencesPerTrimester) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sequenceWeights'],
+        message: `sequenceWeights doit contenir exactement ${val.sequencesPerTrimester} élément(s).`,
+      });
+    }
+    if (val.trimesterWeights.length !== val.trimestersCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['trimesterWeights'],
+        message: `trimesterWeights doit contenir exactement ${val.trimestersCount} élément(s).`,
+      });
+    }
+    if (val.passingThreshold > val.honorRollThreshold) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['honorRollThreshold'],
+        message: 'honorRollThreshold doit être supérieur ou égal à passingThreshold.',
+      });
+    }
+    if (val.honorRollThreshold > val.encouragementThreshold) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['encouragementThreshold'],
+        message: 'encouragementThreshold doit être supérieur ou égal à honorRollThreshold.',
+      });
+    }
+    if (val.encouragementThreshold > val.congratulationThreshold) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['congratulationThreshold'],
+        message: 'congratulationThreshold doit être supérieur ou égal à encouragementThreshold.',
+      });
+    }
+
+    const sortedBands = val.appreciationScale
+      .map((band, index) => ({ ...band, index }))
+      .sort((a, b) => a.min - b.min || a.max - b.max);
+
+    for (let i = 0; i < sortedBands.length; i += 1) {
+      const band = sortedBands[i]!;
+      if (band.min > band.max) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['appreciationScale', band.index],
+          message: `Plage d’appréciation invalide pour "${band.label}" : min (${band.min}) > max (${band.max}).`,
+        });
+      }
+      if (i > 0) {
+        const prev = sortedBands[i - 1]!;
+        if (prev.max >= band.min) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['appreciationScale', band.index],
+            message: `Chevauchement entre les plages "${prev.label}" (${prev.min}–${prev.max}) et "${band.label}" (${band.min}–${band.max}).`,
+          });
+        }
+      }
+    }
+  });
 
 export const CreateAcademicYearSchema = z.object({
   label: z.string().trim().min(4).max(32),

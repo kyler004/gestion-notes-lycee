@@ -167,14 +167,17 @@ const EnvSchema = z
       }
 
       if (
+        val.JWT_REFRESH_SECRET.length < 32 ||
         KNOWN_WEAK_JWT_SECRETS.has(val.JWT_REFRESH_SECRET) ||
         val.JWT_REFRESH_SECRET.includes('change-me') ||
-        val.JWT_REFRESH_SECRET.includes('dev-refresh-secret')
+        val.JWT_REFRESH_SECRET.includes('dev-refresh-secret') ||
+        new Set(val.JWT_REFRESH_SECRET).size < 10
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['JWT_REFRESH_SECRET'],
-          message: 'En production, JWT_REFRESH_SECRET ne doit pas conserver une valeur par défaut.',
+          message:
+            'En production, JWT_REFRESH_SECRET doit faire au moins 32 caractères haute entropie et différer des secrets par défaut.',
         });
       }
 

@@ -11,7 +11,7 @@ import { z } from 'zod';
 import type { DbClient } from '../db/client.js';
 import { refreshTokens, users } from '../db/schema.js';
 import { hashPassword } from '../lib/crypto.js';
-import { ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { PaginationQuerySchema } from '../lib/sql.js';
 
 export interface UserDto {
@@ -71,14 +71,22 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 export function createUsersService(db: DbClient) {
-  async function listUsers(query?: unknown): Promise<UserDto[]> {
+  async function listUsers(query?: unknown, actor?: AuthUserPayload): Promise<UserDto[]> {
     const parsed = ListUsersQuerySchema.parse(query ?? {});
+
+    let effectiveRole = parsed.role;
+    if (actor?.role === 'secretary') {
+      if (parsed.role !== undefined && parsed.role !== 'teacher') {
+        throw new ForbiddenError('Accès refusé : un secrétaire ne peut consulter que la liste des enseignants.');
+      }
+      effectiveRole = 'teacher';
+    }
 
     const baseQuery = db.select(userPublicColumns).from(users);
 
-    const rows = parsed.role
+    const rows = effectiveRole
       ? await baseQuery
-          .where(eq(users.role, parsed.role))
+          .where(eq(users.role, effectiveRole))
           .orderBy(asc(users.fullName), asc(users.username))
           .limit(parsed.limit)
           .offset(parsed.offset)
@@ -103,12 +111,13 @@ export function createUsersService(db: DbClient) {
       );
     }
 
-    const normalizedEmail = data.email ?? null;
+    const normalizedEmail = data.email ? data.email.toLowerCase() : null;
+    const normalizedUsername = data.username.toLowerCase();
 
     const [existingByUsername] = await db
       .select({ id: users.id })
       .from(users)
-      .where(eq(users.username, data.username))
+      .where(sql`lower(${users.username}) = ${normalizedUsername}`)
       .limit(1);
 
     if (existingByUsername) {
@@ -119,7 +128,7 @@ export function createUsersService(db: DbClient) {
       const [existingByEmail] = await db
         .select({ id: users.id })
         .from(users)
-        .where(eq(users.email, normalizedEmail))
+        .where(sql`lower(${users.email}) = ${normalizedEmail}`)
         .limit(1);
 
       if (existingByEmail) {
@@ -220,11 +229,18 @@ export function createUsersService(db: DbClient) {
           }
         }
 
-        if (data.email !== undefined && data.email !== null && data.email !== existing.email) {
+        const normalizedNewEmail =
+          data.email === undefined ? undefined : data.email === null ? null : data.email.toLowerCase();
+
+        if (
+          normalizedNewEmail !== undefined &&
+          normalizedNewEmail !== null &&
+          normalizedNewEmail !== (existing.email?.toLowerCase() ?? null)
+        ) {
           const [duplicateEmail] = await tx
             .select({ id: users.id })
             .from(users)
-            .where(and(eq(users.email, data.email), ne(users.id, id)))
+            .where(and(sql`lower(${users.email}) = ${normalizedNewEmail}`, ne(users.id, id)))
             .limit(1);
 
           if (duplicateEmail) {
@@ -244,8 +260,8 @@ export function createUsersService(db: DbClient) {
           updatedAt: now,
         };
 
-        if (data.email !== undefined) {
-          updateValues.email = data.email;
+        if (normalizedNewEmail !== undefined) {
+          updateValues.email = normalizedNewEmail;
         }
         if (data.fullName !== undefined) {
           updateValues.fullName = data.fullName;
@@ -270,7 +286,7 @@ export function createUsersService(db: DbClient) {
           throw new NotFoundError('Utilisateur introuvable.');
         }
 
-        if (isDeactivating) {
+        if (isDeactivating || isRoleChanging) {
           await tx
             .update(refreshTokens)
             .set({ revokedAt: now })
@@ -302,13 +318,17 @@ export function createUsersService(db: DbClient) {
     const data = ResetPasswordSchema.parse(input);
 
     const [existing] = await db
-      .select({ id: users.id })
+      .select({ id: users.id, username: users.username })
       .from(users)
       .where(eq(users.id, id))
       .limit(1);
 
     if (!existing) {
       throw new NotFoundError('Utilisateur introuvable.');
+    }
+
+    if (data.newPassword.trim().toLowerCase() === existing.username.trim().toLowerCase()) {
+      throw new BadRequestError('Le mot de passe ne peut pas être identique au nom d’utilisateur.');
     }
 
     const newPasswordHash = await hashPassword(data.newPassword);

@@ -9,12 +9,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export const MIGRATIONS_DIR = path.resolve(__dirname, '../../drizzle');
 
+const MIGRATION_ADVISORY_LOCK_KEY = 948272;
+
 export async function runMigrations(connectionString: string): Promise<void> {
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({
+    connectionString,
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 60_000,
+  });
+  let client;
+  let lockAcquired = false;
   try {
-    const db = drizzle(pool);
+    client = await pool.connect();
+    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_ADVISORY_LOCK_KEY]);
+    lockAcquired = true;
+    const db = drizzle(client);
     await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
   } finally {
+    if (client) {
+      if (lockAcquired) {
+        try {
+          await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_ADVISORY_LOCK_KEY]);
+        } catch {
+          // Connection closing anyway; PostgreSQL automatically releases session advisory locks.
+        }
+      }
+      client.release();
+    }
     await pool.end();
   }
 }

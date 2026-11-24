@@ -1000,7 +1000,7 @@ describe('Agent E — Results Service, Reports Routes & Typst PDF Generation', (
 
       expect(res1.statusCode).toBe(200);
       expect(res1.headers['content-type']).toContain('application/pdf');
-      expect(res1.headers['cache-control']).toBe('private, max-age=300');
+      expect(res1.headers['cache-control']).toBe('private, no-store');
       expect(res1.headers.etag).toMatch(/^"[a-f0-9]{64}"$/);
       expect(res1.rawPayload.toString('utf8')).toContain('%PDF-1.4');
       expect(renderBulletinMock).toHaveBeenCalledTimes(1);
@@ -1026,7 +1026,7 @@ describe('Agent E — Results Service, Reports Routes & Typst PDF Generation', (
       });
       expect(honor1.statusCode).toBe(200);
       expect(honor1.headers['content-type']).toContain('application/pdf');
-      expect(honor1.headers['cache-control']).toBe('private, max-age=300');
+      expect(honor1.headers['cache-control']).toBe('private, no-store');
 
       const honor2 = await app.inject({
         method: 'GET',

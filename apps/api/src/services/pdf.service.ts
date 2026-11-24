@@ -54,15 +54,13 @@ function parseImageDataUri(dataUri: string | null | undefined): ParsedImageDataU
   const base64Body = match[2];
   if (!mime || !base64Body) return null;
 
-  let ext = 'png';
+  let ext: 'png' | 'jpg';
   if (mime === 'image/jpeg' || mime === 'image/jpg') {
     ext = 'jpg';
   } else if (mime === 'image/png') {
     ext = 'png';
-  } else if (mime === 'image/webp') {
-    ext = 'webp';
-  } else if (mime === 'image/svg+xml') {
-    ext = 'svg';
+  } else {
+    return null;
   }
 
   const buffer = Buffer.from(base64Body, 'base64');
@@ -292,11 +290,12 @@ export class TypstPdfRenderer implements PdfRenderer {
         throw error;
       }
       const err = error as NodeJS.ErrnoException & { stderr?: string };
-      const detail = err.stderr?.trim() || err.message || 'Erreur inconnue';
+      const internalDetail = err.stderr?.trim() || err.message || 'Erreur inconnue';
+      console.error(`[TypstPdfRenderer] Compilation failed (${templateFileName}): ${internalDetail}`);
       throw new AppError(
         500,
         'PDF_GENERATION_FAILED',
-        `Échec de la génération PDF (${templateFileName}) : ${detail}`,
+        'Échec de la génération PDF. Veuillez réessayer ultérieurement.',
       );
     } finally {
       await rm(tempDir, { recursive: true, force: true });
