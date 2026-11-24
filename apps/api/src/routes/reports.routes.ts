@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
+  AnnualClassReportQuerySchema,
+  AnnualSchoolStatsQuerySchema,
   type AuthUserPayload,
   ClassPeriodReportQuerySchema,
   type GradingCalculatorContract,
@@ -305,6 +307,114 @@ export async function registerReportsRoutes(
 
       const pdfBuffer = await deps.pdfRenderer.renderClassList(payload);
       const fileName = `liste-classe-${sanitizeFilePart(payload.classInfo.name)}.pdf`;
+      return sendPdfResponse(reply, pdfBuffer, etag, fileName);
+    },
+  );
+
+  app.get(
+    '/api/reports/annual/class-results',
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])] },
+    async (request) => {
+      const query = AnnualClassReportQuerySchema.parse(request.query);
+      await assertTeacherFullClassAccess(deps.db, request.currentUser, query.classId);
+      return resultsService.getAnnualClassResults(query.classId);
+    },
+  );
+
+  app.get(
+    '/api/reports/annual/honor-roll',
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])] },
+    async (request) => {
+      const query = AnnualClassReportQuerySchema.parse(request.query);
+      await assertTeacherFullClassAccess(deps.db, request.currentUser, query.classId);
+      return resultsService.getAnnualHonorRoll(query.classId);
+    },
+  );
+
+  app.get(
+    '/api/reports/annual/school-stats',
+    { preHandler: [app.requireRoles(['admin', 'censor', 'principal'])] },
+    async (request) => {
+      const query = AnnualSchoolStatsQuerySchema.parse(request.query);
+      return resultsService.getAnnualSchoolStats(query.academicYearId);
+    },
+  );
+
+  app.get(
+    '/api/reports/annual/bulletins/student/:enrollmentId/pdf',
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary', 'teacher'])],
+      config: pdfRateLimitConfig,
+    },
+    async (request, reply) => {
+      const params = EnrollmentIdParamSchema.parse(request.params);
+
+      if (request.currentUser.role === 'teacher') {
+        const [enr] = await dbLookupEnrollment(deps.db, params.enrollmentId);
+        if (!enr) {
+          throw new NotFoundError('Inscription élève introuvable.');
+        }
+        await assertTeacherFullClassAccess(deps.db, request.currentUser, enr.classId);
+      }
+
+      const payload = await resultsService.buildAnnualBulletinPayload({
+        enrollmentId: params.enrollmentId,
+      });
+
+      const etag = computePayloadEtag(payload);
+      if (isEtagMatch(request.headers['if-none-match'], etag)) {
+        return sendNotModifiedResponse(reply, etag);
+      }
+
+      const pdfBuffer = await deps.pdfRenderer.renderBulletin(payload);
+      const studentCode = payload.students[0]?.matricule ?? params.enrollmentId;
+      const fileName = `bulletin-annuel-${sanitizeFilePart(studentCode)}-${sanitizeFilePart(payload.academicYearLabel)}.pdf`;
+      return sendPdfResponse(reply, pdfBuffer, etag, fileName);
+    },
+  );
+
+  app.get(
+    '/api/reports/annual/bulletins/class/:classId/pdf',
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])],
+      config: pdfRateLimitConfig,
+    },
+    async (request, reply) => {
+      const params = ClassIdParamSchema.parse(request.params);
+
+      const payload = await resultsService.buildAnnualBulletinPayload({
+        classId: params.classId,
+      });
+
+      const etag = computePayloadEtag(payload);
+      if (isEtagMatch(request.headers['if-none-match'], etag)) {
+        return sendNotModifiedResponse(reply, etag);
+      }
+
+      const pdfBuffer = await deps.pdfRenderer.renderBulletin(payload);
+      const fileName = `bulletins-annuels-${sanitizeFilePart(payload.classInfo.name)}-${sanitizeFilePart(payload.academicYearLabel)}.pdf`;
+      return sendPdfResponse(reply, pdfBuffer, etag, fileName);
+    },
+  );
+
+  app.get(
+    '/api/reports/annual/honor-roll/:classId/pdf',
+    {
+      preHandler: [app.requireRoles(['admin', 'censor', 'principal', 'secretary'])],
+      config: pdfRateLimitConfig,
+    },
+    async (request, reply) => {
+      const params = ClassIdParamSchema.parse(request.params);
+
+      const payload = await resultsService.buildAnnualHonorRollPayload(params.classId);
+
+      const etag = computePayloadEtag(payload);
+      if (isEtagMatch(request.headers['if-none-match'], etag)) {
+        return sendNotModifiedResponse(reply, etag);
+      }
+
+      const pdfBuffer = await deps.pdfRenderer.renderHonorRoll(payload);
+      const fileName = `tableau-honneur-annuel-${sanitizeFilePart(payload.classInfo.name)}-${sanitizeFilePart(payload.academicYearLabel)}.pdf`;
       return sendPdfResponse(reply, pdfBuffer, etag, fileName);
     },
   );

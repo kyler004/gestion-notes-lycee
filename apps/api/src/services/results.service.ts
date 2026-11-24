@@ -18,7 +18,9 @@ import {
   type RawGradeRecordInput,
   type SchoolProfileDto,
   type SequenceGradeDetail,
+  type StudentTrimesterSummary,
   type SubjectDefinitionInput,
+  type TrimesterScoreDetail,
 } from '@lycee/shared';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { DbClient } from '../db/client.js';
@@ -86,6 +88,18 @@ export interface ClassResultsReport {
   students: BulletinStudentData[];
 }
 
+export interface AnnualClassResultsReport extends Omit<ClassResultsReport, 'period'> {
+  period: {
+    id: string;
+    code: string;
+    name: string;
+    type: 'annual';
+    status: PeriodStatus;
+    isOfficial: boolean;
+    lockedAt: string | null;
+  };
+}
+
 export interface HonorRollEntry {
   enrollmentId: string;
   studentId: string;
@@ -122,6 +136,17 @@ export interface HonorRollReport {
   entries: HonorRollEntry[];
 }
 
+export interface AnnualHonorRollReport extends Omit<HonorRollReport, 'period'> {
+  period: {
+    id: string;
+    code: string;
+    name: string;
+    type: 'annual';
+    status: PeriodStatus;
+    isOfficial: boolean;
+  };
+}
+
 export interface SchoolClassStatsEntry {
   classId: string;
   className: string;
@@ -152,6 +177,17 @@ export interface SchoolStatsReport {
   overallAverage: number | null;
   overallPassRate: number | null;
   classes: SchoolClassStatsEntry[];
+}
+
+export interface AnnualSchoolStatsReport extends Omit<SchoolStatsReport, 'period'> {
+  period: {
+    id: string;
+    code: string;
+    name: string;
+    type: 'annual';
+    status: PeriodStatus;
+    isOfficial: boolean;
+  };
 }
 
 function toNumber(value: string | number | null | undefined): number | null {
@@ -1638,6 +1674,839 @@ export function createResultsService(
     };
   }
 
+  async function getAnnualClassResults(classId: string): Promise<AnnualClassResultsReport> {
+    const [cls] = await db.select().from(classes).where(eq(classes.id, classId)).limit(1);
+    if (!cls) {
+      throw new NotFoundError('Classe introuvable.');
+    }
+
+    const [year] = await db
+      .select()
+      .from(academicYears)
+      .where(eq(academicYears.id, cls.academicYearId))
+      .limit(1);
+    if (!year) {
+      throw new NotFoundError('Année scolaire introuvable.');
+    }
+
+    let mainTeacherName: string | null = null;
+    if (cls.mainTeacherId) {
+      const [teacher] = await db
+        .select({ fullName: users.fullName })
+        .from(users)
+        .where(eq(users.id, cls.mainTeacherId))
+        .limit(1);
+      mainTeacherName = teacher?.fullName ?? null;
+    }
+
+    const rules = await loadGradingRules(cls.academicYearId);
+    const subjectDefs = await loadClassSubjectDefinitions(cls.id, cls.academicYearId);
+
+    const allYearPeriods = await db
+      .select()
+      .from(periods)
+      .where(eq(periods.academicYearId, cls.academicYearId))
+      .orderBy(asc(periods.orderIndex), asc(periods.code));
+
+    const periodInputs: PeriodDefinitionInput[] = allYearPeriods.map((p) => ({
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      type: p.type,
+      orderIndex: p.orderIndex,
+      weight: toNumber(p.weight) ?? 1,
+      parentPeriodId: p.parentPeriodId,
+    }));
+
+    const trimesterPeriods = allYearPeriods
+      .filter((p) => p.type === 'trimester')
+      .sort((a, b) => a.orderIndex - b.orderIndex || compareText(a.code, b.code));
+
+    const isOfficial =
+      trimesterPeriods.length > 0 && trimesterPeriods.every((t) => t.status === 'locked');
+    const lockedTimestamps = trimesterPeriods
+      .map((t) => t.lockedAt)
+      .filter((d): d is Date => d !== null)
+      .map((d) => d.getTime());
+    const lockedAt =
+      isOfficial && lockedTimestamps.length > 0
+        ? new Date(Math.max(...lockedTimestamps)).toISOString()
+        : null;
+
+    const activeEnrollments = await db
+      .select({
+        enrollmentId: enrollments.id,
+        studentId: students.id,
+        matricule: students.matricule,
+        lastName: students.lastName,
+        firstName: students.firstName,
+        birthDate: students.birthDate,
+        birthPlace: students.birthPlace,
+        sex: students.sex,
+        isRepeater: enrollments.isRepeater,
+      })
+      .from(enrollments)
+      .innerJoin(students, eq(enrollments.studentId, students.id))
+      .where(and(eq(enrollments.classId, cls.id), eq(enrollments.status, 'active')));
+
+    activeEnrollments.sort((a, b) => {
+      const byLast = compareText(a.lastName, b.lastName);
+      if (byLast !== 0) return byLast;
+      const byFirst = compareText(a.firstName, b.firstName);
+      if (byFirst !== 0) return byFirst;
+      return compareText(a.matricule, b.matricule);
+    });
+
+    const enrollmentIds = activeEnrollments.map((e) => e.enrollmentId);
+    const allPeriodIds = periodInputs.map((p) => p.id);
+
+    const rawGradesRows =
+      enrollmentIds.length > 0 && allPeriodIds.length > 0
+        ? await db
+            .select()
+            .from(grades)
+            .where(
+              and(
+                inArray(grades.enrollmentId, enrollmentIds),
+                inArray(grades.periodId, allPeriodIds),
+              ),
+            )
+        : [];
+
+    const rawGrades: RawGradeRecordInput[] = rawGradesRows.map((g) => ({
+      enrollmentId: g.enrollmentId,
+      classSubjectId: g.classSubjectId,
+      periodId: g.periodId,
+      score: toNumber(g.score),
+      status: g.status,
+    }));
+
+    const gradeLookup = new Map<string, { score: number | null; status: GradeStatus }>();
+    for (const g of rawGrades) {
+      gradeLookup.set(`${g.enrollmentId}:${g.classSubjectId}:${g.periodId}`, {
+        score: g.score,
+        status: g.status,
+      });
+    }
+
+    const annualComputationInput: ClassPeriodComputationInput = {
+      targetPeriodId: year.id,
+      targetPeriodType: 'annual',
+      periods: periodInputs,
+      subjects: subjectDefs,
+      enrollmentIds,
+      grades: rawGrades,
+      rules,
+    };
+
+    const computed = calculator.computeClassResults(annualComputationInput);
+    const computedByEnrollment = new Map(computed.students.map((s) => [s.enrollmentId, s]));
+
+    // Build per-trimester summaries (from snapshots when trimester is locked, else live calculation)
+    const lockedTrimesterIds = trimesterPeriods
+      .filter((t) => t.status === 'locked')
+      .map((t) => t.id);
+
+    const [snapStudentRows, snapSubjectRows] =
+      lockedTrimesterIds.length > 0
+        ? await Promise.all([
+            db
+              .select()
+              .from(periodStudentResults)
+              .where(
+                and(
+                  eq(periodStudentResults.classId, cls.id),
+                  inArray(periodStudentResults.periodId, lockedTrimesterIds),
+                ),
+              ),
+            db
+              .select()
+              .from(periodSubjectResults)
+              .where(
+                and(
+                  eq(periodSubjectResults.classId, cls.id),
+                  inArray(periodSubjectResults.periodId, lockedTrimesterIds),
+                ),
+              ),
+          ])
+        : [[], []];
+
+    const snapStudentsByTri = new Map<string, typeof snapStudentRows>();
+    for (const row of snapStudentRows) {
+      const list = snapStudentsByTri.get(row.periodId) ?? [];
+      list.push(row);
+      snapStudentsByTri.set(row.periodId, list);
+    }
+
+    const snapSubjectsByTri = new Map<string, typeof snapSubjectRows>();
+    for (const row of snapSubjectRows) {
+      const list = snapSubjectsByTri.get(row.periodId) ?? [];
+      list.push(row);
+      snapSubjectsByTri.set(row.periodId, list);
+    }
+
+    const trimesterSummariesByEnrollment = new Map<string, StudentTrimesterSummary[]>();
+    const trimesterSubjectAvgByKey = new Map<string, TrimesterScoreDetail[]>();
+
+    for (let tIdx = 0; tIdx < trimesterPeriods.length; tIdx += 1) {
+      const tri = trimesterPeriods[tIdx]!;
+      const triWeightRaw = toNumber(tri.weight);
+      const triWeight =
+        triWeightRaw !== null && triWeightRaw > 0
+          ? triWeightRaw
+          : (rules.trimesterWeights[tIdx] ?? 1);
+
+      const triSnapStudents = tri.status === 'locked' ? (snapStudentsByTri.get(tri.id) ?? []) : [];
+      const triSnapSubjects = tri.status === 'locked' ? (snapSubjectsByTri.get(tri.id) ?? []) : [];
+
+      if (tri.status === 'locked' && triSnapStudents.length > 0) {
+        const snapStudentByEnr = new Map(triSnapStudents.map((s) => [s.enrollmentId, s]));
+        const snapSubByKey = new Map(
+          triSnapSubjects.map((s) => [`${s.enrollmentId}:${s.classSubjectId}`, s]),
+        );
+
+        for (const enr of activeEnrollments) {
+          const stSnap = snapStudentByEnr.get(enr.enrollmentId);
+          const summaryList = trimesterSummariesByEnrollment.get(enr.enrollmentId) ?? [];
+          summaryList.push({
+            periodId: tri.id,
+            code: tri.code,
+            name: tri.name,
+            orderIndex: tri.orderIndex,
+            generalAverage: toNumber(stSnap?.generalAverage),
+            rank: stSnap?.rank ?? null,
+          });
+          trimesterSummariesByEnrollment.set(enr.enrollmentId, summaryList);
+
+          for (const sub of subjectDefs) {
+            const subSnap = snapSubByKey.get(`${enr.enrollmentId}:${sub.classSubjectId}`);
+            const key = `${enr.enrollmentId}:${sub.classSubjectId}`;
+            const subList = trimesterSubjectAvgByKey.get(key) ?? [];
+            subList.push({
+              periodId: tri.id,
+              code: tri.code,
+              name: tri.name,
+              orderIndex: tri.orderIndex,
+              weight: triWeight,
+              average: toNumber(subSnap?.average),
+            });
+            trimesterSubjectAvgByKey.set(key, subList);
+          }
+        }
+      } else {
+        const triInput: ClassPeriodComputationInput = {
+          targetPeriodId: tri.id,
+          targetPeriodType: 'trimester',
+          periods: periodInputs,
+          subjects: subjectDefs,
+          enrollmentIds,
+          grades: rawGrades,
+          rules,
+        };
+        let triComputed = calculator.computeClassResults(triInput);
+        if (calculator === fallbackGradingCalculator) {
+          const triChildSeqs = periodInputs
+            .filter((p) => p.type === 'sequence' && p.parentPeriodId === tri.id)
+            .sort((a, b) => a.orderIndex - b.orderIndex);
+          triComputed = enhanceFallbackComputation(
+            triComputed,
+            triInput,
+            triChildSeqs,
+            gradeLookup,
+            calculator,
+          );
+        }
+
+        const triStudentByEnr = new Map(triComputed.students.map((s) => [s.enrollmentId, s]));
+        for (const enr of activeEnrollments) {
+          const triSt = triStudentByEnr.get(enr.enrollmentId);
+          const summaryList = trimesterSummariesByEnrollment.get(enr.enrollmentId) ?? [];
+          summaryList.push({
+            periodId: tri.id,
+            code: tri.code,
+            name: tri.name,
+            orderIndex: tri.orderIndex,
+            generalAverage: triSt?.generalAverage ?? null,
+            rank: triSt?.rank ?? null,
+          });
+          trimesterSummariesByEnrollment.set(enr.enrollmentId, summaryList);
+
+          const triSubByCs = new Map((triSt?.subjects ?? []).map((s) => [s.classSubjectId, s]));
+          for (const sub of subjectDefs) {
+            const triSub = triSubByCs.get(sub.classSubjectId);
+            const key = `${enr.enrollmentId}:${sub.classSubjectId}`;
+            const subList = trimesterSubjectAvgByKey.get(key) ?? [];
+            subList.push({
+              periodId: tri.id,
+              code: tri.code,
+              name: tri.name,
+              orderIndex: tri.orderIndex,
+              weight: triWeight,
+              average: triSub?.average ?? null,
+            });
+            trimesterSubjectAvgByKey.set(key, subList);
+          }
+        }
+      }
+    }
+
+    // Council decisions: decision & appreciation from last trimester, absencesHours summed across all trimesters
+    const trimesterIds = trimesterPeriods.map((t) => t.id);
+    const lastTrimester = trimesterPeriods.at(-1) ?? null;
+
+    const decisionRows =
+      enrollmentIds.length > 0 && trimesterIds.length > 0
+        ? await db
+            .select()
+            .from(councilDecisions)
+            .where(
+              and(
+                inArray(councilDecisions.periodId, trimesterIds),
+                inArray(councilDecisions.enrollmentId, enrollmentIds),
+              ),
+            )
+        : [];
+
+    const totalAbsencesByEnrollment = new Map<string, number>();
+    const lastTrimesterDecisionByEnrollment = new Map<
+      string,
+      typeof councilDecisions.$inferSelect
+    >();
+
+    for (const d of decisionRows) {
+      totalAbsencesByEnrollment.set(
+        d.enrollmentId,
+        (totalAbsencesByEnrollment.get(d.enrollmentId) ?? 0) + d.absencesHours,
+      );
+      if (lastTrimester && d.periodId === lastTrimester.id) {
+        lastTrimesterDecisionByEnrollment.set(d.enrollmentId, d);
+      }
+    }
+
+    const classSize = activeEnrollments.length;
+
+    const bulletinStudents: BulletinStudentData[] = activeEnrollments.map((enr) => {
+      const comp = computedByEnrollment.get(enr.enrollmentId);
+      const lastDecision = lastTrimesterDecisionByEnrollment.get(enr.enrollmentId);
+      const totalAbsences = totalAbsencesByEnrollment.get(enr.enrollmentId) ?? 0;
+
+      const subjectRows: BulletinSubjectRow[] = (comp?.subjects ?? []).map((sub) => ({
+        classSubjectId: sub.classSubjectId,
+        subjectCode: sub.subjectCode,
+        subjectName: sub.subjectName,
+        subjectShortName: sub.subjectShortName,
+        subjectGroupName: sub.subjectGroupName,
+        subjectGroupOrder: sub.subjectGroupOrder,
+        coefficient: sub.coefficient,
+        teacherName: sub.teacherName,
+        sequenceScores: [...sub.sequenceScores]
+          .sort((a, b) => a.orderIndex - b.orderIndex)
+          .map(normalizeSequenceDetail),
+        trimesterScores: trimesterSubjectAvgByKey.get(`${enr.enrollmentId}:${sub.classSubjectId}`) ?? [],
+        average: sub.average,
+        weightedScore: sub.weightedScore,
+        rank: sub.rank,
+        classAverage: sub.classAverage,
+        minScore: sub.minScore,
+        maxScore: sub.maxScore,
+        appreciation: sub.appreciation,
+      }));
+
+      subjectRows.sort((a, b) => {
+        if (a.subjectGroupOrder !== b.subjectGroupOrder) {
+          return a.subjectGroupOrder - b.subjectGroupOrder;
+        }
+        const byName = compareText(a.subjectName, b.subjectName);
+        if (byName !== 0) return byName;
+        return compareText(a.subjectCode, b.subjectCode);
+      });
+
+      return {
+        enrollmentId: enr.enrollmentId,
+        studentId: enr.studentId,
+        matricule: enr.matricule,
+        lastName: enr.lastName,
+        firstName: enr.firstName,
+        birthDate: enr.birthDate,
+        birthPlace: enr.birthPlace,
+        sex: enr.sex,
+        isRepeater: enr.isRepeater,
+        subjects: subjectRows,
+        trimesterSummaries: trimesterSummariesByEnrollment.get(enr.enrollmentId) ?? [],
+        totalCoefficient: comp?.totalCoefficient ?? 0,
+        totalPoints: comp?.totalPoints ?? 0,
+        generalAverage: comp?.generalAverage ?? null,
+        rank: comp?.rank ?? null,
+        classSize,
+        classAverage: computed.classAverage,
+        minClassAverage: computed.minClassAverage,
+        maxClassAverage: computed.maxClassAverage,
+        passRate: computed.passRate,
+        isHonorRoll: comp?.isHonorRoll ?? false,
+        autoAppreciation: comp?.autoAppreciation ?? '',
+        councilDecision: lastDecision?.decision ?? 'none',
+        councilAppreciation: lastDecision?.generalAppreciation ?? '',
+        absencesHours: totalAbsences,
+      };
+    });
+
+    const honorRollCount = bulletinStudents.filter((s) => s.isHonorRoll).length;
+
+    return {
+      academicYearId: year.id,
+      academicYearLabel: year.label,
+      isOfficial,
+      fromSnapshot: false,
+      period: {
+        id: year.id,
+        code: 'ANNUEL',
+        name: 'Bilan Annuel',
+        type: 'annual',
+        status: isOfficial ? 'locked' : 'open',
+        isOfficial,
+        lockedAt,
+      },
+      classInfo: {
+        id: cls.id,
+        name: cls.name,
+        level: cls.level,
+        series: cls.series,
+        mainTeacherId: cls.mainTeacherId,
+        mainTeacherName,
+      },
+      statistics: {
+        classSize,
+        evaluatedCount: computed.evaluatedCount,
+        passCount: computed.passCount,
+        passRate: computed.passRate,
+        classAverage: computed.classAverage,
+        minClassAverage: computed.minClassAverage,
+        maxClassAverage: computed.maxClassAverage,
+        honorRollCount,
+        honorRollThreshold: rules.honorRollThreshold,
+        passingThreshold: rules.passingThreshold,
+      },
+      students: bulletinStudents,
+    };
+  }
+
+  async function getAnnualHonorRoll(classId: string): Promise<AnnualHonorRollReport> {
+    const annualResults = await getAnnualClassResults(classId);
+
+    const eligible = annualResults.students
+      .filter((s) => s.isHonorRoll && s.generalAverage !== null)
+      .sort((a, b) => {
+        const rankA = a.rank ?? Number.MAX_SAFE_INTEGER;
+        const rankB = b.rank ?? Number.MAX_SAFE_INTEGER;
+        if (rankA !== rankB) return rankA - rankB;
+        const avgDiff = (b.generalAverage ?? 0) - (a.generalAverage ?? 0);
+        if (avgDiff !== 0) return avgDiff;
+        const byLast = compareText(a.lastName, b.lastName);
+        if (byLast !== 0) return byLast;
+        return compareText(a.firstName, b.firstName);
+      });
+
+    const entries: HonorRollEntry[] = eligible.map((s) => ({
+      enrollmentId: s.enrollmentId,
+      studentId: s.studentId,
+      rank: s.rank ?? 0,
+      matricule: s.matricule,
+      lastName: s.lastName,
+      firstName: s.firstName,
+      fullName: `${s.lastName} ${s.firstName}`.trim(),
+      generalAverage: s.generalAverage as number,
+      appreciation:
+        s.councilAppreciation.trim().length > 0 ? s.councilAppreciation : s.autoAppreciation,
+      autoAppreciation: s.autoAppreciation,
+      councilDecision: s.councilDecision,
+    }));
+
+    return {
+      academicYearId: annualResults.academicYearId,
+      academicYearLabel: annualResults.academicYearLabel,
+      isOfficial: annualResults.isOfficial,
+      period: {
+        id: annualResults.period.id,
+        code: annualResults.period.code,
+        name: annualResults.period.name,
+        type: 'annual',
+        status: annualResults.period.status,
+        isOfficial: annualResults.period.isOfficial,
+      },
+      classInfo: {
+        id: annualResults.classInfo.id,
+        name: annualResults.classInfo.name,
+        level: annualResults.classInfo.level,
+        series: annualResults.classInfo.series,
+      },
+      honorRollThreshold: annualResults.statistics.honorRollThreshold,
+      entries,
+    };
+  }
+
+  async function getAnnualSchoolStats(academicYearId: string): Promise<AnnualSchoolStatsReport> {
+    const [year] = await db
+      .select()
+      .from(academicYears)
+      .where(eq(academicYears.id, academicYearId))
+      .limit(1);
+    if (!year) {
+      throw new NotFoundError('Année scolaire introuvable.');
+    }
+
+    const allYearPeriods = await db
+      .select()
+      .from(periods)
+      .where(eq(periods.academicYearId, academicYearId))
+      .orderBy(asc(periods.orderIndex), asc(periods.code));
+
+    const trimesterPeriods = allYearPeriods.filter((p) => p.type === 'trimester');
+    const isOfficial =
+      trimesterPeriods.length > 0 && trimesterPeriods.every((t) => t.status === 'locked');
+
+    const yearClasses = await db
+      .select()
+      .from(classes)
+      .where(eq(classes.academicYearId, academicYearId))
+      .orderBy(asc(classes.level), asc(classes.name));
+
+    if (yearClasses.length === 0) {
+      return {
+        academicYearId: year.id,
+        academicYearLabel: year.label,
+        period: {
+          id: year.id,
+          code: 'ANNUEL',
+          name: 'Bilan Annuel',
+          type: 'annual',
+          status: isOfficial ? 'locked' : 'open',
+          isOfficial,
+        },
+        totalStudents: 0,
+        evaluatedStudents: 0,
+        overallAverage: null,
+        overallPassRate: null,
+        classes: [],
+      };
+    }
+
+    const rules = await loadGradingRules(academicYearId);
+    const classIds = yearClasses.map((cls) => cls.id);
+
+    const periodInputs: PeriodDefinitionInput[] = allYearPeriods.map((p) => ({
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      type: p.type,
+      orderIndex: p.orderIndex,
+      weight: toNumber(p.weight) ?? 1,
+      parentPeriodId: p.parentPeriodId,
+    }));
+
+    const csRows = await db
+      .select({
+        classId: classSubjects.classId,
+        classSubjectId: classSubjects.id,
+        subjectId: subjects.id,
+        subjectCode: subjects.code,
+        subjectName: subjects.name,
+        subjectShortName: subjects.shortName,
+        subjectGroupName: subjectGroups.name,
+        subjectGroupOrder: subjectGroups.orderIndex,
+        coefficient: classSubjects.coefficient,
+      })
+      .from(classSubjects)
+      .innerJoin(subjects, eq(classSubjects.subjectId, subjects.id))
+      .leftJoin(subjectGroups, eq(classSubjects.subjectGroupId, subjectGroups.id))
+      .where(inArray(classSubjects.classId, classIds));
+
+    const csIds = csRows.map((row) => row.classSubjectId);
+    const teacherByClassSubject = new Map<string, string>();
+    if (csIds.length > 0) {
+      const assignmentRows = await db
+        .select({
+          classSubjectId: teacherAssignments.classSubjectId,
+          teacherName: users.fullName,
+        })
+        .from(teacherAssignments)
+        .innerJoin(users, eq(teacherAssignments.teacherId, users.id))
+        .where(
+          and(
+            eq(teacherAssignments.academicYearId, academicYearId),
+            eq(teacherAssignments.isActive, true),
+            inArray(teacherAssignments.classSubjectId, csIds),
+          ),
+        )
+        .orderBy(asc(teacherAssignments.createdAt), asc(users.fullName));
+
+      for (const assignment of assignmentRows) {
+        if (!teacherByClassSubject.has(assignment.classSubjectId)) {
+          teacherByClassSubject.set(assignment.classSubjectId, assignment.teacherName);
+        }
+      }
+    }
+
+    const subjectsByClass = new Map<string, SubjectDefinitionInput[]>();
+    for (const row of csRows) {
+      const list = subjectsByClass.get(row.classId) ?? [];
+      list.push({
+        classSubjectId: row.classSubjectId,
+        subjectId: row.subjectId,
+        subjectCode: row.subjectCode,
+        subjectName: row.subjectName,
+        subjectShortName: row.subjectShortName,
+        subjectGroupName: row.subjectGroupName ?? null,
+        subjectGroupOrder: row.subjectGroupOrder ?? 999,
+        coefficient: toNumber(row.coefficient) ?? 1,
+        teacherName: teacherByClassSubject.get(row.classSubjectId) ?? null,
+      });
+      subjectsByClass.set(row.classId, list);
+    }
+
+    for (const list of subjectsByClass.values()) {
+      list.sort((a, b) => {
+        if (a.subjectGroupOrder !== b.subjectGroupOrder) {
+          return a.subjectGroupOrder - b.subjectGroupOrder;
+        }
+        const byName = compareText(a.subjectName, b.subjectName);
+        if (byName !== 0) return byName;
+        return compareText(a.subjectCode, b.subjectCode);
+      });
+    }
+
+    const activeEnrollments = await db
+      .select({
+        enrollmentId: enrollments.id,
+        classId: enrollments.classId,
+        lastName: students.lastName,
+        firstName: students.firstName,
+        matricule: students.matricule,
+      })
+      .from(enrollments)
+      .innerJoin(students, eq(enrollments.studentId, students.id))
+      .where(and(inArray(enrollments.classId, classIds), eq(enrollments.status, 'active')));
+
+    const enrollmentsByClass = new Map<string, typeof activeEnrollments>();
+    const classByEnrollment = new Map<string, string>();
+    for (const enr of activeEnrollments) {
+      classByEnrollment.set(enr.enrollmentId, enr.classId);
+      const list = enrollmentsByClass.get(enr.classId) ?? [];
+      list.push(enr);
+      enrollmentsByClass.set(enr.classId, list);
+    }
+
+    for (const list of enrollmentsByClass.values()) {
+      list.sort((a, b) => {
+        const byLast = compareText(a.lastName, b.lastName);
+        if (byLast !== 0) return byLast;
+        const byFirst = compareText(a.firstName, b.firstName);
+        if (byFirst !== 0) return byFirst;
+        return compareText(a.matricule, b.matricule);
+      });
+    }
+
+    const enrollmentIds = activeEnrollments.map((enr) => enr.enrollmentId);
+    const periodIds = periodInputs.map((p) => p.id);
+    const gradesByClass = new Map<string, RawGradeRecordInput[]>();
+
+    if (enrollmentIds.length > 0 && periodIds.length > 0) {
+      const rawGradesRows = await db
+        .select({
+          enrollmentId: grades.enrollmentId,
+          classSubjectId: grades.classSubjectId,
+          periodId: grades.periodId,
+          score: grades.score,
+          status: grades.status,
+        })
+        .from(grades)
+        .where(
+          and(
+            inArray(grades.enrollmentId, enrollmentIds),
+            inArray(grades.periodId, periodIds),
+          ),
+        );
+
+      for (const g of rawGradesRows) {
+        const clsId = classByEnrollment.get(g.enrollmentId);
+        if (!clsId) continue;
+        const list = gradesByClass.get(clsId) ?? [];
+        list.push({
+          enrollmentId: g.enrollmentId,
+          classSubjectId: g.classSubjectId,
+          periodId: g.periodId,
+          score: toNumber(g.score),
+          status: g.status,
+        });
+        gradesByClass.set(clsId, list);
+      }
+    }
+
+    let totalStudents = 0;
+    let evaluatedStudents = 0;
+    let totalPassCount = 0;
+    let sumEvaluatedAverages = 0;
+    const perClass: SchoolClassStatsEntry[] = [];
+
+    for (const cls of yearClasses) {
+      const classEnrollments = enrollmentsByClass.get(cls.id) ?? [];
+      const classEnrollmentIds = classEnrollments.map((enr) => enr.enrollmentId);
+      const classRawGrades = gradesByClass.get(cls.id) ?? [];
+      const classSubjectDefs = subjectsByClass.get(cls.id) ?? [];
+
+      const computed = calculator.computeClassResults({
+        targetPeriodId: year.id,
+        targetPeriodType: 'annual',
+        periods: periodInputs,
+        subjects: classSubjectDefs,
+        enrollmentIds: classEnrollmentIds,
+        grades: classRawGrades,
+        rules,
+      });
+
+      const classSize = classEnrollments.length;
+      totalStudents += classSize;
+      evaluatedStudents += computed.evaluatedCount;
+      totalPassCount += computed.passCount;
+
+      for (const st of computed.students) {
+        if (st.generalAverage !== null) {
+          sumEvaluatedAverages += st.generalAverage;
+        }
+      }
+
+      perClass.push({
+        classId: cls.id,
+        className: cls.name,
+        level: cls.level,
+        series: cls.series,
+        totalStudents: classSize,
+        evaluatedStudents: computed.evaluatedCount,
+        passCount: computed.passCount,
+        average: computed.classAverage,
+        passRate: computed.passRate,
+        minAverage: computed.minClassAverage,
+        maxAverage: computed.maxClassAverage,
+      });
+    }
+
+    const overallAverage =
+      evaluatedStudents > 0 ? calculator.roundGrade(sumEvaluatedAverages / evaluatedStudents) : null;
+    const overallPassRate =
+      evaluatedStudents > 0 ? calculator.roundGrade((totalPassCount / evaluatedStudents) * 100) : null;
+
+    return {
+      academicYearId: year.id,
+      academicYearLabel: year.label,
+      period: {
+        id: year.id,
+        code: 'ANNUEL',
+        name: 'Bilan Annuel',
+        type: 'annual',
+        status: isOfficial ? 'locked' : 'open',
+        isOfficial,
+      },
+      totalStudents,
+      evaluatedStudents,
+      overallAverage,
+      overallPassRate,
+      classes: perClass,
+    };
+  }
+
+  async function buildAnnualBulletinPayload(options: {
+    classId?: string;
+    enrollmentId?: string;
+  }): Promise<BulletinReportPayload> {
+    if (!options.classId && !options.enrollmentId) {
+      throw new BadRequestError('classId ou enrollmentId est requis.');
+    }
+
+    let targetClassId = options.classId;
+    if (options.enrollmentId) {
+      const [enr] = await db
+        .select()
+        .from(enrollments)
+        .where(eq(enrollments.id, options.enrollmentId))
+        .limit(1);
+      if (!enr) {
+        throw new NotFoundError('Inscription élève introuvable.');
+      }
+      if (targetClassId && targetClassId !== enr.classId) {
+        throw new BadRequestError('L’inscription ne correspond pas à la classe demandée.');
+      }
+      targetClassId = enr.classId;
+    }
+
+    const [school, annualResults] = await Promise.all([
+      getSchoolProfilePayload(),
+      getAnnualClassResults(targetClassId as string),
+    ]);
+
+    let selectedStudents = annualResults.students;
+    if (options.enrollmentId) {
+      const single = annualResults.students.find((s) => s.enrollmentId === options.enrollmentId);
+      if (!single) {
+        throw new NotFoundError('Aucun résultat annuel trouvé pour cet élève.');
+      }
+      selectedStudents = [single];
+    }
+
+    return {
+      school,
+      academicYearLabel: annualResults.academicYearLabel,
+      period: {
+        id: annualResults.period.id,
+        code: annualResults.period.code,
+        name: annualResults.period.name,
+        type: 'annual',
+        isOfficial: annualResults.period.isOfficial,
+        lockedAt: annualResults.period.lockedAt,
+      },
+      classInfo: {
+        id: annualResults.classInfo.id,
+        name: annualResults.classInfo.name,
+        level: annualResults.classInfo.level,
+        series: annualResults.classInfo.series,
+        mainTeacherName: annualResults.classInfo.mainTeacherName,
+      },
+      generatedAt: new Date().toISOString(),
+      students: selectedStudents,
+    };
+  }
+
+  async function buildAnnualHonorRollPayload(classId: string): Promise<HonorRollReportPayload> {
+    const [school, honorRoll] = await Promise.all([
+      getSchoolProfilePayload(),
+      getAnnualHonorRoll(classId),
+    ]);
+
+    return {
+      school,
+      academicYearLabel: honorRoll.academicYearLabel,
+      period: {
+        id: honorRoll.period.id,
+        code: honorRoll.period.code,
+        name: honorRoll.period.name,
+        isOfficial: honorRoll.period.isOfficial,
+      },
+      classInfo: {
+        id: honorRoll.classInfo.id,
+        name: honorRoll.classInfo.name,
+        level: honorRoll.classInfo.level,
+      },
+      honorRollThreshold: honorRoll.honorRollThreshold,
+      generatedAt: new Date().toISOString(),
+      entries: honorRoll.entries.map((e) => ({
+        rank: e.rank,
+        matricule: e.matricule,
+        fullName: e.fullName,
+        generalAverage: e.generalAverage,
+        appreciation: e.appreciation,
+        councilDecision: e.councilDecision,
+      })),
+    };
+  }
+
   return {
     getClassResults,
     getHonorRoll,
@@ -1645,6 +2514,11 @@ export function createResultsService(
     buildBulletinPayload,
     buildClassListPayload,
     buildHonorRollPayload,
+    getAnnualClassResults,
+    getAnnualHonorRoll,
+    getAnnualSchoolStats,
+    buildAnnualBulletinPayload,
+    buildAnnualHonorRollPayload,
   };
 }
 

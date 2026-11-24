@@ -13,3 +13,11 @@ export const SchoolStatsQuerySchema = z.object({
 export const StudentBulletinQuerySchema = z.object({
   periodId: z.string().uuid(),
 });
+
+export const AnnualClassReportQuerySchema = z.object({
+  classId: z.string().uuid(),
+});
+
+export const AnnualSchoolStatsQuerySchema = z.object({
+  academicYearId: z.string().uuid(),
+});
