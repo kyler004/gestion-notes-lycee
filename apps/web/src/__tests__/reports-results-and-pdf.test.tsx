@@ -454,4 +454,415 @@ describe('/reports Stats, Council Decisions, Results, Audit & PDF downloads', ()
     expect(await screen.findByText('15,50 → 16,50')).toBeInTheDocument();
     expect(screen.getByText('Recomptage copie')).toBeInTheDocument();
   });
+
+  it('supports Bilan annuel on stats & results tabs, annual PDFs, and period/council audit sub-views', async () => {
+    const user = userEvent.setup();
+    const TRIM1_ID = 'bbbb2222-2222-4222-8222-222222222222';
+    const TRIM2_ID = 'bbbb3333-3333-4333-8333-333333333333';
+    const DECISION_ID = '44444444-4444-4444-8444-444444444444';
+    const requestedUrls: string[] = [];
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+
+      if (url.includes('/api/academic-years') && !url.includes('/periods') && !url.includes('/grading-rules')) {
+        return jsonRes({
+          academicYears: [
+            {
+              id: YEAR_ID,
+              label: '2026-2027',
+              startDate: '2026-09-01',
+              endDate: '2027-06-30',
+              isActive: true,
+              syncVersion: 1,
+              createdAt: '2026-09-01T00:00:00.000Z',
+              updatedAt: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes('/periods/audit')) {
+        return jsonRes({
+          logs: [
+            {
+              id: LOG_ID,
+              academicYearId: YEAR_ID,
+              academicYearLabel: '2026-2027',
+              periodId: TRIM1_ID,
+              periodCode: 'T1',
+              periodName: 'Trimestre 1',
+              periodType: 'trimester',
+              action: 'locked',
+              actorId: USER_ID,
+              actorName: 'Proviseur Principal',
+              actorUsername: 'principal',
+              reason: 'Clôture officielle T1',
+              createdAt: '2026-12-15T10:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes('/completeness')) {
+        return jsonRes({
+          periodId: SEQ1_ID,
+          periodCode: 'S1',
+          periodName: 'Séquence 1',
+          periodType: 'sequence',
+          status: 'locked',
+          isComplete: true,
+          classes: [],
+        });
+      }
+      if (url.includes('/periods')) {
+        return jsonRes({
+          periods: [
+            {
+              id: SEQ1_ID,
+              academicYearId: YEAR_ID,
+              parentPeriodId: TRIM1_ID,
+              type: 'sequence',
+              code: 'S1',
+              name: 'Séquence 1',
+              orderIndex: 1,
+              weight: 1,
+              status: 'locked',
+              lockedAt: '2026-10-30T10:00:00.000Z',
+              lockedBy: USER_ID,
+              syncVersion: 2,
+              updatedAt: '2026-10-30T10:00:00.000Z',
+            },
+            {
+              id: TRIM1_ID,
+              academicYearId: YEAR_ID,
+              parentPeriodId: null,
+              type: 'trimester',
+              code: 'T1',
+              name: 'Trimestre 1',
+              orderIndex: 1,
+              weight: 1,
+              status: 'locked',
+              lockedAt: '2026-12-15T10:00:00.000Z',
+              lockedBy: USER_ID,
+              syncVersion: 3,
+              updatedAt: '2026-12-15T10:00:00.000Z',
+            },
+            {
+              id: TRIM2_ID,
+              academicYearId: YEAR_ID,
+              parentPeriodId: null,
+              type: 'trimester',
+              code: 'T2',
+              name: 'Trimestre 2',
+              orderIndex: 2,
+              weight: 1,
+              status: 'locked',
+              lockedAt: '2027-03-20T10:00:00.000Z',
+              lockedBy: USER_ID,
+              syncVersion: 4,
+              updatedAt: '2027-03-20T10:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes('/api/classes')) {
+        return jsonRes({
+          classes: [
+            {
+              id: CLASS1_ID,
+              academicYearId: YEAR_ID,
+              name: '3ème A',
+              level: '3ème',
+              series: null,
+              mainTeacherId: USER_ID,
+              mainTeacherName: 'Prof Maths',
+              syncVersion: 3,
+              updatedAt: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes('/api/reports/school-stats')) {
+        return jsonRes({
+          academicYearId: YEAR_ID,
+          academicYearLabel: '2026-2027',
+          period: {
+            id: SEQ1_ID,
+            code: 'S1',
+            name: 'Séquence 1',
+            type: 'sequence',
+            status: 'locked',
+            isOfficial: true,
+          },
+          totalStudents: 1,
+          evaluatedStudents: 1,
+          overallAverage: 14.0,
+          overallPassRate: 100,
+          classes: [],
+        });
+      }
+      if (url.includes('/api/reports/annual/school-stats')) {
+        return jsonRes({
+          academicYearId: YEAR_ID,
+          academicYearLabel: '2026-2027',
+          period: {
+            id: YEAR_ID,
+            code: 'ANNUEL',
+            name: 'Bilan Annuel',
+            type: 'annual',
+            status: 'locked',
+            isOfficial: true,
+          },
+          totalStudents: 1,
+          evaluatedStudents: 1,
+          overallAverage: 15.75,
+          overallPassRate: 100,
+          classes: [
+            {
+              classId: CLASS1_ID,
+              className: '3ème A',
+              level: '3ème',
+              series: null,
+              totalStudents: 1,
+              evaluatedStudents: 1,
+              passCount: 1,
+              average: 15.75,
+              passRate: 100,
+              minAverage: 15.75,
+              maxAverage: 15.75,
+            },
+          ],
+        });
+      }
+      if (url.includes('/api/reports/annual/class-results')) {
+        return jsonRes({
+          academicYearId: YEAR_ID,
+          academicYearLabel: '2026-2027',
+          isOfficial: true,
+          fromSnapshot: false,
+          period: {
+            id: YEAR_ID,
+            code: 'ANNUEL',
+            name: 'Bilan Annuel',
+            type: 'annual',
+            status: 'locked',
+            isOfficial: true,
+            lockedAt: '2027-03-20T10:00:00.000Z',
+          },
+          classInfo: {
+            id: CLASS1_ID,
+            name: '3ème A',
+            level: '3ème',
+            series: null,
+            mainTeacherId: USER_ID,
+            mainTeacherName: 'Prof Maths',
+          },
+          statistics: {
+            classSize: 1,
+            evaluatedCount: 1,
+            passCount: 1,
+            passRate: 100,
+            classAverage: 15.75,
+            minClassAverage: 15.75,
+            maxClassAverage: 15.75,
+            honorRollCount: 1,
+            honorRollThreshold: 12,
+            passingThreshold: 10,
+          },
+          students: [
+            {
+              enrollmentId: ENROLL1_ID,
+              studentId: STUDENT1_ID,
+              matricule: '26LBA001',
+              lastName: 'BELLO',
+              firstName: 'Aminatou',
+              birthDate: '2011-04-12',
+              birthPlace: 'Yaoundé',
+              sex: 'F',
+              isRepeater: false,
+              trimesterSummaries: [
+                {
+                  periodId: TRIM1_ID,
+                  code: 'T1',
+                  name: 'Trimestre 1',
+                  orderIndex: 1,
+                  generalAverage: 15.0,
+                  rank: 1,
+                },
+                {
+                  periodId: TRIM2_ID,
+                  code: 'T2',
+                  name: 'Trimestre 2',
+                  orderIndex: 2,
+                  generalAverage: 16.5,
+                  rank: 1,
+                },
+              ],
+              subjects: [
+                {
+                  classSubjectId: CS1_ID,
+                  subjectCode: 'MATH',
+                  subjectName: 'Mathématiques',
+                  subjectShortName: 'MATHS',
+                  subjectGroupName: 'Sciences',
+                  subjectGroupOrder: 1,
+                  coefficient: 4,
+                  teacherName: 'Prof Maths',
+                  sequenceScores: [],
+                  trimesterScores: [
+                    {
+                      periodId: TRIM1_ID,
+                      code: 'T1',
+                      name: 'Trimestre 1',
+                      orderIndex: 1,
+                      weight: 1,
+                      average: 15.0,
+                    },
+                    {
+                      periodId: TRIM2_ID,
+                      code: 'T2',
+                      name: 'Trimestre 2',
+                      orderIndex: 2,
+                      weight: 1,
+                      average: 16.5,
+                    },
+                  ],
+                  average: 15.75,
+                  weightedScore: 63,
+                  rank: 1,
+                  classAverage: 15.75,
+                  minScore: 15.75,
+                  maxScore: 15.75,
+                  appreciation: 'Bien',
+                },
+              ],
+              totalCoefficient: 4,
+              totalPoints: 63,
+              generalAverage: 15.75,
+              rank: 1,
+              classSize: 1,
+              classAverage: 15.75,
+              minClassAverage: 15.75,
+              maxClassAverage: 15.75,
+              passRate: 100,
+              isHonorRoll: true,
+              autoAppreciation: 'Bien',
+              councilDecision: 'pass',
+              councilAppreciation: 'Admise en classe supérieure',
+              absencesHours: 4,
+            },
+          ],
+        });
+      }
+      if (url.includes('/api/reports/annual/honor-roll')) {
+        return jsonRes({
+          academicYearId: YEAR_ID,
+          academicYearLabel: '2026-2027',
+          isOfficial: true,
+          period: {
+            id: YEAR_ID,
+            code: 'ANNUEL',
+            name: 'Bilan Annuel',
+            type: 'annual',
+            status: 'locked',
+            isOfficial: true,
+          },
+          classInfo: { id: CLASS1_ID, name: '3ème A', level: '3ème', series: null },
+          honorRollThreshold: 12,
+          entries: [],
+        });
+      }
+      if (url.includes('/api/reports/annual/') && url.includes('/pdf')) {
+        return new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': 'inline; filename="annuel.pdf"',
+          },
+        });
+      }
+      if (url.includes('/api/council-decisions/audit')) {
+        return jsonRes({
+          logs: [
+            {
+              id: LOG_ID,
+              councilDecisionId: DECISION_ID,
+              academicYearId: YEAR_ID,
+              classId: CLASS1_ID,
+              className: '3ème A',
+              enrollmentId: ENROLL1_ID,
+              studentId: STUDENT1_ID,
+              studentMatricule: '26LBA001',
+              studentLastName: 'BELLO',
+              studentFirstName: 'Aminatou',
+              periodId: TRIM2_ID,
+              periodCode: 'T2',
+              periodName: 'Trimestre 2',
+              periodType: 'trimester',
+              previousDecision: 'none',
+              newDecision: 'pass',
+              previousAppreciation: '',
+              newAppreciation: 'Très sérieux',
+              previousAbsencesHours: 2,
+              newAbsencesHours: 4,
+              changedBy: USER_ID,
+              changedByName: 'Censeur Lycée',
+              reason: 'Conseil annuel',
+              serverTimestamp: '2027-03-20T12:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes('/api/grades/audit')) {
+        return jsonRes({ logs: [] });
+      }
+      return jsonRes({});
+    });
+
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    renderReports('/reports');
+
+    // 1. Sélection de Bilan annuel (T1-T3) dans ReportContextBar
+    expect(await screen.findByText('14,00 / 20')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Période évaluée/ }));
+    await user.click(screen.getByRole('menuitem', { name: /Bilan annuel \(T1–T3\)/ }));
+
+    expect(await screen.findByText('15,75 / 20')).toBeInTheDocument();
+
+    // 2. Passage à Résultats & Bulletins PDF en mode annuel -> colonnes T1/T2 + modale détail + PDF annuel
+    await user.click(screen.getByRole('button', { name: t('reports.stats.viewClassBtn') }));
+    expect(await screen.findByText('15,00')).toBeInTheDocument();
+    expect(screen.getByText('16,50')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: t('reports.results.detailBtn') }));
+    expect(await screen.findByText(t('reports.results.trimesterSummariesTitle'))).toBeInTheDocument();
+    expect(screen.getByText('Absences cumulées : 4 h')).toBeInTheDocument();
+    const closeBtns = screen.getAllByRole('button', { name: t('admin.common.close') });
+    await user.click(closeBtns[closeBtns.length - 1]!);
+
+    await user.click(
+      screen.getByRole('button', { name: t('reports.results.pdfAnnualClassBulletins') }),
+    );
+    await waitFor(() => {
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+      expect(
+        requestedUrls.some((u) => u.includes(`/api/reports/annual/bulletins/class/${CLASS1_ID}/pdf`)),
+      ).toBe(true);
+    });
+
+    // 3. Validation -> Historique des verrouillages -> bascule sur audit périodes -> puis audit conseil
+    await user.click(screen.getByRole('tab', { name: t('reports.tabs.validation') }));
+    await user.click(
+      await screen.findByRole('button', { name: t('reports.validation.viewAuditHistoryBtn') }),
+    );
+
+    expect(await screen.findByText('Clôture officielle T1')).toBeInTheDocument();
+    expect(screen.getByText('@principal')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: t('reports.audit.subtabCouncil') }));
+    expect(await screen.findByText('Censeur Lycée')).toBeInTheDocument();
+    expect(screen.getByText(/→ Admis\(e\)/)).toBeInTheDocument();
+    expect(screen.getByText('2 h → 4 h')).toBeInTheDocument();
+  });
 });

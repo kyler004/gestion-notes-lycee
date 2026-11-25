@@ -170,6 +170,9 @@ export function UsersTab({
   const resetPwdMutation = useMutation({
     mutationFn: () => {
       if (!resetTarget) throw new Error('Utilisateur non sélectionné.');
+      if (resetPasswordValue.trim().toLowerCase() === resetTarget.username.trim().toLowerCase()) {
+        throw new Error(t('auth.passwordSameAsUsername'));
+      }
       const parsed = ResetPasswordSchema.safeParse({ newPassword: resetPasswordValue });
       if (!parsed.success) {
         throw new Error(parsed.error.issues[0]?.message ?? 'Mot de passe invalide.');
@@ -412,6 +415,11 @@ export function UsersTab({
                     icon: <RiShieldUserFill />,
                   }))}
                 />
+                {modalMode === 'edit' && editingUser && role !== editingUser.role && (
+                  <FieldMessage tone="hint">
+                    {t('admin.users.roleChangeSessionHint')}
+                  </FieldMessage>
+                )}
                 <Switch
                   id="user-active-switch"
                   checked={isActive}
@@ -434,6 +442,7 @@ export function UsersTab({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+                <FieldMessage tone="hint">{t('admin.users.passwordPolicyHint')}</FieldMessage>
               </div>
             )}
 
@@ -474,6 +483,7 @@ export function UsersTab({
                 value={resetPasswordValue}
                 onChange={(e) => setResetPasswordValue(e.target.value)}
               />
+              <FieldMessage tone="hint">{t('admin.users.passwordPolicyHint')}</FieldMessage>
             </div>
             {resetError && <FieldMessage tone="error">{resetError}</FieldMessage>}
           </div>

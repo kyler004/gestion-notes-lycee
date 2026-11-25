@@ -35,10 +35,15 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import { reportKeys } from '@/lib/api/query-keys';
 import {
+  downloadAnnualClassBulletinsPdf,
+  downloadAnnualHonorRollPdf,
+  downloadAnnualStudentBulletinPdf,
   downloadClassBulletinsPdf,
   downloadClassListPdf,
   downloadHonorRollPdf,
   downloadStudentBulletinPdf,
+  getAnnualClassResults,
+  getAnnualHonorRoll,
   getClassResults,
   getHonorRoll,
   triggerBrowserDownload,
@@ -60,10 +65,12 @@ function formatIsoDateTime(iso: string | null): string {
 export function ClassResultsReportsTab({
   classId,
   periodId,
+  isAnnual = false,
   isOnline,
 }: {
   classId: string;
   periodId: string;
+  isAnnual?: boolean;
   isOnline: boolean;
 }) {
   const [subview, setSubview] = useState<'ranking' | 'honor'>('ranking');
@@ -72,15 +79,21 @@ export function ClassResultsReportsTab({
   const [detailStudent, setDetailStudent] = useState<BulletinStudentDto | null>(null);
 
   const resultsQuery = useQuery({
-    queryKey: reportKeys.classResults(classId, periodId),
-    queryFn: () => getClassResults(classId, periodId),
-    enabled: Boolean(classId && periodId),
+    queryKey: isAnnual
+      ? reportKeys.annualClassResults(classId)
+      : reportKeys.classResults(classId, periodId),
+    queryFn: () =>
+      isAnnual ? getAnnualClassResults(classId) : getClassResults(classId, periodId),
+    enabled: Boolean(classId && (isAnnual || periodId)),
   });
 
   const honorQuery = useQuery({
-    queryKey: reportKeys.honorRoll(classId, periodId),
-    queryFn: () => getHonorRoll(classId, periodId),
-    enabled: Boolean(classId && periodId),
+    queryKey: isAnnual
+      ? reportKeys.annualHonorRoll(classId)
+      : reportKeys.honorRoll(classId, periodId),
+    queryFn: () =>
+      isAnnual ? getAnnualHonorRoll(classId) : getHonorRoll(classId, periodId),
+    enabled: Boolean(classId && (isAnnual || periodId)),
   });
 
   const sortedStudents = useMemo(() => {
@@ -97,6 +110,32 @@ export function ClassResultsReportsTab({
       );
     });
   }, [resultsQuery.data?.students, rankingSort]);
+
+  const trimesterColumns = useMemo(() => {
+    if (!isAnnual) return [];
+    const firstWithSummaries = (resultsQuery.data?.students ?? []).find(
+      (s) => (s.trimesterSummaries?.length ?? 0) > 0,
+    );
+    if (!firstWithSummaries?.trimesterSummaries) return [];
+    return [...firstWithSummaries.trimesterSummaries].sort(
+      (a, b) => a.orderIndex - b.orderIndex,
+    );
+  }, [isAnnual, resultsQuery.data?.students]);
+
+  const detailTrimesterColumns = useMemo(() => {
+    if (!isAnnual || !detailStudent) return [];
+    const firstSubjectWithTrimesters = detailStudent.subjects.find(
+      (sub) => (sub.trimesterScores?.length ?? 0) > 0,
+    );
+    if (firstSubjectWithTrimesters?.trimesterScores) {
+      return [...firstSubjectWithTrimesters.trimesterScores].sort(
+        (a, b) => a.orderIndex - b.orderIndex,
+      );
+    }
+    return [...(detailStudent.trimesterSummaries ?? [])]
+      .sort((a, b) => a.orderIndex - b.orderIndex)
+      .map((ts) => ({ periodId: ts.periodId, code: ts.code, name: ts.name }));
+  }, [isAnnual, detailStudent]);
 
   const honorEntries = useMemo(() => {
     const raw = honorQuery.data?.entries ?? [];
@@ -140,15 +179,21 @@ export function ClassResultsReportsTab({
   const honorThreshold =
     honorQuery.data?.honorRollThreshold ?? report.statistics.honorRollThreshold;
 
+  const officialBadgeLabel = report.isOfficial
+    ? isAnnual
+      ? t('reports.context.annualOfficialBadge')
+      : t('reports.statusOfficialBadge')
+    : isAnnual
+      ? t('reports.context.annualProvisionalBadge')
+      : t('reports.statusProvisionalBadge');
+
   return (
     <div className="space-y-6">
       {/* Barre documents PDF */}
       <Card variant="elevated" className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={report.isOfficial ? 'success' : 'warning'} icon={report.isOfficial ? <RiLockFill /> : undefined}>
-            {report.isOfficial
-              ? t('reports.statusOfficialBadge')
-              : t('reports.statusProvisionalBadge')}
+            {officialBadgeLabel}
           </Badge>
           <span className="text-sm font-bold text-foreground">
             {report.classInfo.name} · {report.period.code}
@@ -164,10 +209,16 @@ export function ClassResultsReportsTab({
             loading={downloadingKey === 'class'}
             disabled={!isOnline || (downloadingKey !== null && downloadingKey !== 'class')}
             onClick={() =>
-              void handleDownload('class', () => downloadClassBulletinsPdf(classId, periodId))
+              void handleDownload('class', () =>
+                isAnnual
+                  ? downloadAnnualClassBulletinsPdf(classId)
+                  : downloadClassBulletinsPdf(classId, periodId),
+              )
             }
           >
-            {t('reports.results.pdfClassBulletins')}
+            {isAnnual
+              ? t('reports.results.pdfAnnualClassBulletins')
+              : t('reports.results.pdfClassBulletins')}
           </Button>
           <Button
             type="button"
@@ -177,10 +228,16 @@ export function ClassResultsReportsTab({
             loading={downloadingKey === 'honor'}
             disabled={!isOnline || (downloadingKey !== null && downloadingKey !== 'honor')}
             onClick={() =>
-              void handleDownload('honor', () => downloadHonorRollPdf(classId, periodId))
+              void handleDownload('honor', () =>
+                isAnnual
+                  ? downloadAnnualHonorRollPdf(classId)
+                  : downloadHonorRollPdf(classId, periodId),
+              )
             }
           >
-            {t('reports.results.pdfHonorRoll')}
+            {isAnnual
+              ? t('reports.results.pdfAnnualHonorRoll')
+              : t('reports.results.pdfHonorRoll')}
           </Button>
           <Button
             type="button"
@@ -201,15 +258,23 @@ export function ClassResultsReportsTab({
         <Card variant="success" className="flex items-center gap-3 p-4 text-sm font-semibold">
           <RiCheckDoubleFill className="size-5 shrink-0" />
           <span>
-            {t('reports.results.officialBanner', {
-              date: formatIsoDateTime(report.period.lockedAt),
-            })}
+            {isAnnual
+              ? t('reports.results.annualOfficialBanner', {
+                  date: formatIsoDateTime(report.period.lockedAt),
+                })
+              : t('reports.results.officialBanner', {
+                  date: formatIsoDateTime(report.period.lockedAt),
+                })}
           </span>
         </Card>
       ) : (
         <Card variant="info" className="flex items-center gap-3 p-4 text-sm font-semibold">
           <RiInformationFill className="size-5 shrink-0" />
-          <span>{t('reports.results.provisionalBanner')}</span>
+          <span>
+            {isAnnual
+              ? t('reports.results.annualProvisionalBanner')
+              : t('reports.results.provisionalBanner')}
+          </span>
         </Card>
       )}
 
@@ -310,7 +375,14 @@ export function ClassResultsReportsTab({
                     <th className="px-4 py-3">{t('reports.council.colRank')}</th>
                     <th className="px-4 py-3">{t('admin.students.matriculeLabel')}</th>
                     <th className="px-4 py-3">{t('reports.council.colStudent')}</th>
-                    <th className="px-4 py-3">{t('reports.council.colAverage')}</th>
+                    {trimesterColumns.map((trimCol) => (
+                      <th key={trimCol.periodId} className="px-3 py-3 text-center">
+                        {trimCol.code}
+                      </th>
+                    ))}
+                    <th className="px-4 py-3">
+                      {isAnnual ? t('reports.results.colAnnualAvg') : t('reports.council.colAverage')}
+                    </th>
                     <th className="px-4 py-3">{t('reports.council.colDecision')}</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -342,6 +414,21 @@ export function ClassResultsReportsTab({
                           <p className="text-xs text-muted-foreground">{st.autoAppreciation}</p>
                         )}
                       </td>
+                      {trimesterColumns.map((trimCol) => {
+                        const trimVal = st.trimesterSummaries?.find(
+                          (ts) => ts.periodId === trimCol.periodId,
+                        );
+                        return (
+                          <td
+                            key={trimCol.periodId}
+                            className="px-3 py-3 text-center text-xs font-semibold text-muted-foreground tabular-nums"
+                          >
+                            {trimVal?.generalAverage !== null && trimVal?.generalAverage !== undefined
+                              ? formatDecimalFr(trimVal.generalAverage)
+                              : '—'}
+                          </td>
+                        );
+                      })}
                       <td className="px-4 py-3 font-extrabold tabular-nums">
                         {st.generalAverage !== null
                           ? `${formatDecimalFr(st.generalAverage)} / 20`
@@ -375,11 +462,15 @@ export function ClassResultsReportsTab({
                             }
                             onClick={() =>
                               void handleDownload(st.enrollmentId, () =>
-                                downloadStudentBulletinPdf(st.enrollmentId, periodId),
+                                isAnnual
+                                  ? downloadAnnualStudentBulletinPdf(st.enrollmentId)
+                                  : downloadStudentBulletinPdf(st.enrollmentId, periodId),
                               )
                             }
                           >
-                            {t('reports.results.pdfStudentBulletin')}
+                            {isAnnual
+                              ? t('reports.results.pdfAnnualStudentBulletin')
+                              : t('reports.results.pdfStudentBulletin')}
                           </Button>
                         </div>
                       </td>
@@ -427,7 +518,7 @@ export function ClassResultsReportsTab({
         open={Boolean(detailStudent)}
         onOpenChange={(open) => !open && setDetailStudent(null)}
       >
-        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {t('reports.results.bulletinDetailTitle', {
@@ -448,13 +539,57 @@ export function ClassResultsReportsTab({
 
           {detailStudent && (
             <div className="space-y-4">
+              {isAnnual && (detailStudent.trimesterSummaries?.length ?? 0) > 0 && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-extrabold text-muted-foreground uppercase">
+                      {t('reports.results.trimesterSummariesTitle')}
+                    </p>
+                    <Badge variant="neutral" className="tabular-nums">
+                      {t('reports.results.totalAbsencesLabel', {
+                        hours: detailStudent.absencesHours,
+                      })}
+                    </Badge>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {[...(detailStudent.trimesterSummaries ?? [])]
+                      .sort((a, b) => a.orderIndex - b.orderIndex)
+                      .map((ts) => (
+                        <Card key={ts.periodId} className="flex items-center justify-between p-3">
+                          <div>
+                            <p className="text-xs font-extrabold text-foreground">{ts.code}</p>
+                            <p className="text-[11px] text-muted-foreground">{ts.name}</p>
+                          </div>
+                          <div className="text-right tabular-nums">
+                            <p className="text-sm font-extrabold text-primary">
+                              {ts.generalAverage !== null
+                                ? `${formatDecimalFr(ts.generalAverage)} / 20`
+                                : '—'}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Rang : {ts.rank ?? '—'}
+                            </p>
+                          </div>
+                        </Card>
+                      ))}
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-x-auto rounded-lg border border-border">
                 <table className="w-full border-collapse text-left text-xs">
                   <thead className="border-b border-border bg-muted/60 font-extrabold text-muted-foreground uppercase">
                     <tr>
                       <th className="px-3 py-2.5">{t('reports.results.colSubject')}</th>
                       <th className="px-3 py-2.5">{t('reports.results.colCoef')}</th>
-                      <th className="px-3 py-2.5">{t('reports.results.colAvg')}</th>
+                      {detailTrimesterColumns.map((trimCol) => (
+                        <th key={trimCol.periodId} className="px-2.5 py-2.5 text-center">
+                          {trimCol.code}
+                        </th>
+                      ))}
+                      <th className="px-3 py-2.5">
+                        {isAnnual ? t('reports.results.colAnnualAvg') : t('reports.results.colAvg')}
+                      </th>
                       <th className="px-3 py-2.5">{t('reports.results.colRank')}</th>
                       <th className="px-3 py-2.5">{t('reports.results.colAppreciation')}</th>
                     </tr>
@@ -466,6 +601,19 @@ export function ClassResultsReportsTab({
                           {sub.subjectName}
                         </td>
                         <td className="px-3 py-2 tabular-nums">{sub.coefficient}</td>
+                        {detailTrimesterColumns.map((trimCol) => {
+                          const tScore = sub.trimesterScores?.find(
+                            (ts) => ts.periodId === trimCol.periodId,
+                          );
+                          return (
+                            <td
+                              key={trimCol.periodId}
+                              className="px-2.5 py-2 text-center text-muted-foreground tabular-nums"
+                            >
+                              {formatDecimalFr(tScore?.average)}
+                            </td>
+                          );
+                        })}
                         <td className="px-3 py-2 font-extrabold tabular-nums">
                           {formatDecimalFr(sub.average)}
                         </td>
@@ -501,11 +649,15 @@ export function ClassResultsReportsTab({
                 disabled={!isOnline}
                 onClick={() =>
                   void handleDownload(detailStudent.enrollmentId, () =>
-                    downloadStudentBulletinPdf(detailStudent.enrollmentId, periodId),
+                    isAnnual
+                      ? downloadAnnualStudentBulletinPdf(detailStudent.enrollmentId)
+                      : downloadStudentBulletinPdf(detailStudent.enrollmentId, periodId),
                   )
                 }
               >
-                {t('reports.results.pdfStudentBulletin')}
+                {isAnnual
+                  ? t('reports.results.pdfAnnualStudentBulletin')
+                  : t('reports.results.pdfStudentBulletin')}
               </Button>
             )}
           </DialogFooter>

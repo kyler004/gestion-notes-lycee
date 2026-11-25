@@ -347,4 +347,237 @@ describe('/admin Academic Rules, Period Locks & Student Enrollments', () => {
       /Impossible de changer la classe de cet élève/i,
     );
   });
+
+  it('validates non-overlapping appreciation bands and completes dry-run -> commit CSV import', async () => {
+    const user = userEvent.setup();
+    const roster = [
+      {
+        enrollmentId: ENROLL1_ID,
+        studentId: STUDENT1_ID,
+        classId: CLASS1_ID,
+        academicYearId: YEAR_ID,
+        matricule: '26LYC001',
+        lastName: 'BELLO',
+        firstName: 'Aminatou',
+        birthDate: '2010-04-12',
+        birthPlace: 'Yaoundé',
+        sex: 'F',
+        isRepeater: false,
+        status: 'active',
+        enrolledAt: '2026-09-01T00:00:00.000Z',
+        syncVersion: 10,
+      },
+    ];
+    let dryRunCalls = 0;
+    let commitCalls = 0;
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url.includes('/api/academic-years') && !url.includes('/periods') && !url.includes('/grading-rules')) {
+        return jsonRes({
+          academicYears: [
+            {
+              id: YEAR_ID,
+              label: '2026-2027',
+              startDate: '2026-09-01',
+              endDate: '2027-06-30',
+              isActive: true,
+              syncVersion: 1,
+              createdAt: '2026-09-01T00:00:00.000Z',
+              updatedAt: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes('/periods')) {
+        return jsonRes({ periods: [] });
+      }
+      if (url.includes('/grading-rules') && method === 'GET') {
+        return jsonRes({
+          id: '77777777-7777-4777-8777-777777777777',
+          academicYearId: YEAR_ID,
+          ...CAMEROON_DEFAULT_GRADING_RULES,
+          syncVersion: 2,
+          updatedAt: '2026-09-01T00:00:00.000Z',
+        });
+      }
+      if (url.includes('/api/classes?') || url.endsWith('/api/classes')) {
+        return jsonRes({
+          classes: [
+            {
+              id: CLASS1_ID,
+              academicYearId: YEAR_ID,
+              name: '3ème A',
+              level: '3ème',
+              series: null,
+              mainTeacherId: null,
+              mainTeacherName: null,
+              syncVersion: 2,
+              updatedAt: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.includes(`/api/classes/${CLASS1_ID}/students`)) {
+        return jsonRes({ classId: CLASS1_ID, students: roster });
+      }
+      if (url.includes('/api/students/import-csv') && method === 'POST') {
+        const body = JSON.parse(String(init?.body)) as { csvContent: string; dryRun: boolean };
+        if (body.dryRun) {
+          dryRunCalls += 1;
+          if (body.csvContent.includes('INVALID_DATE')) {
+            return jsonRes({
+              dryRun: true,
+              committed: false,
+              summary: {
+                totalRows: 1,
+                validRows: 0,
+                errorCount: 1,
+                studentsToCreate: 0,
+                studentsReused: 0,
+                enrollmentsToCreate: 0,
+              },
+              errors: [
+                {
+                  line: 2,
+                  matricule: '26CSV001',
+                  field: 'birthDate',
+                  message: 'Format de date invalide.',
+                },
+              ],
+              preview: [],
+              createdStudents: [],
+              createdEnrollments: [],
+            });
+          }
+          return jsonRes({
+            dryRun: true,
+            committed: false,
+            summary: {
+              totalRows: 1,
+              validRows: 1,
+              errorCount: 0,
+              studentsToCreate: 1,
+              studentsReused: 0,
+              enrollmentsToCreate: 1,
+            },
+            errors: [],
+            preview: [
+              {
+                line: 2,
+                matricule: '26CSV001',
+                lastName: 'ATANGANA',
+                firstName: 'Luc',
+                birthDate: '2011-02-14',
+                sex: 'M',
+                classId: CLASS1_ID,
+                className: '3ème A',
+                isRepeater: false,
+                action: 'create_student',
+              },
+            ],
+            createdStudents: [],
+            createdEnrollments: [],
+          });
+        }
+        commitCalls += 1;
+        roster.push({
+          enrollmentId: ENROLL2_ID,
+          studentId: STUDENT2_ID,
+          classId: CLASS1_ID,
+          academicYearId: YEAR_ID,
+          matricule: '26CSV001',
+          lastName: 'ATANGANA',
+          firstName: 'Luc',
+          birthDate: '2011-02-14',
+          birthPlace: 'Yaoundé',
+          sex: 'M',
+          isRepeater: false,
+          status: 'active',
+          enrolledAt: '2026-11-25T00:00:00.000Z',
+          syncVersion: 15,
+        });
+        return jsonRes(
+          {
+            dryRun: false,
+            committed: true,
+            summary: {
+              totalRows: 1,
+              validRows: 1,
+              errorCount: 0,
+              studentsToCreate: 1,
+              studentsReused: 0,
+              enrollmentsToCreate: 1,
+            },
+            errors: [],
+            preview: [],
+            createdStudents: [],
+            createdEnrollments: [],
+          },
+          201,
+        );
+      }
+      if (url.includes('/api/students') && method === 'GET') {
+        return jsonRes({ students: [] });
+      }
+      return jsonRes({});
+    });
+
+    // 1. Test live non-overlapping appreciation scale check in /admin?tab=academic
+    const first = renderAdmin('/admin?tab=academic');
+    const removeLastBandBtn = await screen.findByRole('button', { name: 'Supprimer tranche 8' });
+    await user.click(removeLastBandBtn);
+    await user.click(screen.getByRole('button', { name: t('admin.academic.addBandBtn') }));
+    // Should auto-suggest 18..20 without overlap!
+    expect(screen.getByLabelText(`${t('admin.academic.bandMinLabel')} #8`)).toHaveValue(18);
+    expect(screen.getByLabelText(`${t('admin.academic.bandMaxLabel')} #8`)).toHaveValue(20);
+    expect(screen.queryByText(/Chevauchement/)).not.toBeInTheDocument();
+
+    // Adding another band when [0..20] is full triggers live overlap feedback
+    await user.click(screen.getByRole('button', { name: t('admin.academic.addBandBtn') }));
+    expect(await screen.findByText(/Chevauchement/)).toBeInTheDocument();
+
+    first.unmount();
+    queryClient.clear();
+
+    // 2. Test CSV student import dry-run -> error -> fix -> commit in /admin?tab=students
+    renderAdmin('/admin?tab=students');
+    expect((await screen.findAllByText('BELLO Aminatou')).length).toBeGreaterThanOrEqual(1);
+
+    await user.click(screen.getByRole('button', { name: t('admin.students.importCsvBtn') }));
+    const csvTextarea = await screen.findByLabelText(t('admin.students.csv.contentLabel'));
+    await user.type(
+      csvTextarea,
+      'matricule;nom;prenom;date_naissance;sexe\n26CSV001;ATANGANA;Luc;INVALID_DATE;M',
+    );
+    await user.click(screen.getByRole('button', { name: t('admin.students.csv.analyzeBtn') }));
+
+    expect(await screen.findByText(/Format de date invalide/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: t('admin.students.csv.commitBtn', { count: 0 }) }),
+    ).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: t('admin.students.csv.resetPreviewBtn') }));
+    const refreshedTextarea = await screen.findByLabelText(t('admin.students.csv.contentLabel'));
+    await user.clear(refreshedTextarea);
+    await user.type(
+      refreshedTextarea,
+      'matricule;nom;prenom;date_naissance;sexe\n26CSV001;ATANGANA;Luc;14/02/2011;M',
+    );
+    await user.click(screen.getByRole('button', { name: t('admin.students.csv.analyzeBtn') }));
+
+    expect(await screen.findByText('ATANGANA Luc')).toBeInTheDocument();
+    const commitBtn = screen.getByRole('button', {
+      name: t('admin.students.csv.commitBtn', { count: 1 }),
+    });
+    expect(commitBtn).toBeEnabled();
+    await user.click(commitBtn);
+
+    await waitFor(() => {
+      expect(dryRunCalls).toBe(2);
+      expect(commitCalls).toBe(1);
+      expect(screen.getAllByText('ATANGANA Luc').length).toBeGreaterThanOrEqual(1);
+    });
+  });
 });

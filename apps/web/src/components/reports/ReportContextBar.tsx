@@ -1,4 +1,5 @@
 import {
+  RiAwardFill,
   RiCalendar2Fill,
   RiCalendarCheckFill,
   RiLockFill,
@@ -12,6 +13,7 @@ import { isApiError, isNetworkError } from '@/lib/api/errors';
 import { t } from '@/lib/i18n';
 
 const ALL_VALUE = '__all__';
+export const ANNUAL_PERIOD_VALUE = '__annual__';
 
 export function formatReportError(err: unknown): string {
   if (isApiError(err)) {
@@ -53,6 +55,7 @@ export function ReportContextBar({
   showClass = false,
   allowAllClasses = false,
   allowAllPeriods = false,
+  allowAnnual = false,
 }: {
   years: AcademicYearDto[];
   selectedYearId?: string;
@@ -67,8 +70,15 @@ export function ReportContextBar({
   showClass?: boolean;
   allowAllClasses?: boolean;
   allowAllPeriods?: boolean;
+  allowAnnual?: boolean;
 }) {
-  const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
+  const isAnnualSelected = allowAnnual && selectedPeriodId === ANNUAL_PERIOD_VALUE;
+  const selectedPeriod = isAnnualSelected
+    ? undefined
+    : periods.find((p) => p.id === selectedPeriodId);
+  const trimesters = periods.filter((p) => p.type === 'trimester');
+  const isAnnualOfficial =
+    trimesters.length > 0 && trimesters.every((p) => p.status === 'locked');
 
   const periodOptions = [
     ...(allowAllPeriods
@@ -89,6 +99,18 @@ export function ReportContextBar({
           : t('reports.context.periodOpenDesc'),
       icon: p.status === 'locked' ? <RiLockFill /> : <RiCalendar2Fill />,
     })),
+    ...(allowAnnual
+      ? [
+          {
+            value: ANNUAL_PERIOD_VALUE,
+            label: t('reports.context.annualOptionLabel'),
+            description: isAnnualOfficial
+              ? t('reports.context.annualOfficialDesc')
+              : t('reports.context.annualProvisionalDesc'),
+            icon: <RiAwardFill />,
+          },
+        ]
+      : []),
   ];
 
   const classOptions = [
@@ -144,6 +166,20 @@ export function ReportContextBar({
           />
         )}
       </div>
+
+      {showPeriod && isAnnualSelected && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>{t('reports.context.annualSelectedLabel')}</span>
+          <Badge
+            variant={isAnnualOfficial ? 'success' : 'warning'}
+            icon={isAnnualOfficial ? <RiLockFill /> : <RiAwardFill />}
+          >
+            {isAnnualOfficial
+              ? t('reports.context.annualOfficialBadge')
+              : t('reports.context.annualProvisionalBadge')}
+          </Badge>
+        </div>
+      )}
 
       {selectedPeriod && showPeriod && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">

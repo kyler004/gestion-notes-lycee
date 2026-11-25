@@ -3,11 +3,19 @@ import {
   createStudent,
   fetchSchoolLogoBlob,
   fileToLogoPayload,
+  generateStudentsCsvTemplate,
   getSchoolProfile,
+  importStudentsCsv,
   listUsers,
+  readCsvFileContent,
 } from '../admin';
 import { apiFetchBlob, registerApiAuthBridge } from '../client';
 import { ApiError } from '../errors';
+
+const YEAR_ID = 'aaaa1111-1111-4111-8111-111111111111';
+const CLASS_ID = 'bbbb2222-2222-4222-8222-222222222222';
+const STUDENT_ID = 'cccc3333-3333-4333-8333-333333333333';
+const ENROLL_ID = 'dddd4444-4444-4444-8444-444444444444';
 
 describe('Admin API client & binary blob fetcher', () => {
   const originalFetch = globalThis.fetch;
@@ -48,7 +56,8 @@ describe('Admin API client & binary blob fetcher', () => {
     });
 
     const blob = await apiFetchBlob('/api/school/logo');
-    expect(blob).toBeInstanceOf(Blob);
+    expect(Object.prototype.toString.call(blob)).toBe('[object Blob]');
+    expect(blob.type).toBe('image/png');
     expect(blob.size).toBe(pngBytes.length);
     expect(refreshMock).toHaveBeenCalledTimes(1);
   });
@@ -166,6 +175,179 @@ describe('Admin API client & binary blob fetcher', () => {
       name: 'ApiError',
       status: 409,
       message: 'Un élève avec le matricule "26-001" existe déjà.',
+    });
+  });
+
+  it('validates CSV file content and handles dry-run, commit 201, 422 details, and 429 rate-limit', async () => {
+    const badFile = new File(['abc'], 'eleves.pdf', { type: 'application/pdf' });
+    await expect(readCsvFileContent(badFile)).rejects.toThrow('.csv');
+
+    const emptyFile = new File([''], 'vide.csv', { type: 'text/csv' });
+    await expect(readCsvFileContent(emptyFile)).rejects.toThrow('vide');
+
+    const hugeFile = new File([new Uint8Array(513 * 1024)], 'huge.csv', { type: 'text/csv' });
+    await expect(readCsvFileContent(hugeFile)).rejects.toThrow('512 Ko');
+
+    const template = generateStudentsCsvTemplate('3ème A');
+    const okFile = new File([template], 'eleves.csv', { type: 'text/csv' });
+    const parsedCsv = await readCsvFileContent(okFile);
+    expect(parsedCsv).toContain('MBARGA;Pauline');
+
+    registerApiAuthBridge({
+      getAccessToken: () => 'tok',
+      refreshAccessToken: async () => null,
+    });
+
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            dryRun: true,
+            committed: false,
+            summary: {
+              totalRows: 2,
+              validRows: 2,
+              errorCount: 0,
+              studentsToCreate: 2,
+              studentsReused: 0,
+              enrollmentsToCreate: 2,
+            },
+            errors: [],
+            preview: [
+              {
+                line: 2,
+                matricule: '26LYC101',
+                lastName: 'MBARGA',
+                firstName: 'Pauline',
+                birthDate: '2011-03-15',
+                sex: 'F',
+                classId: CLASS_ID,
+                className: '3ème A',
+                isRepeater: false,
+                action: 'create_student',
+              },
+            ],
+            createdStudents: [],
+            createdEnrollments: [],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            dryRun: false,
+            committed: true,
+            summary: {
+              totalRows: 1,
+              validRows: 1,
+              errorCount: 0,
+              studentsToCreate: 1,
+              studentsReused: 0,
+              enrollmentsToCreate: 1,
+            },
+            errors: [],
+            preview: [],
+            createdStudents: [
+              {
+                id: STUDENT_ID,
+                matricule: '26LYC101',
+                lastName: 'MBARGA',
+                firstName: 'Pauline',
+                birthDate: '2011-03-15',
+                birthPlace: 'Yaoundé',
+                sex: 'F',
+                syncVersion: 1,
+                createdAt: '2026-11-25T08:00:00.000Z',
+                updatedAt: '2026-11-25T08:00:00.000Z',
+              },
+            ],
+            createdEnrollments: [
+              {
+                id: ENROLL_ID,
+                studentId: STUDENT_ID,
+                classId: CLASS_ID,
+                academicYearId: YEAR_ID,
+                isRepeater: false,
+                status: 'active',
+                syncVersion: 2,
+                enrolledAt: '2026-11-25T08:00:00.000Z',
+                updatedAt: '2026-11-25T08:00:00.000Z',
+              },
+            ],
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Des erreurs ont été détectées dans le fichier CSV.',
+              details: {
+                summary: {
+                  totalRows: 1,
+                  validRows: 0,
+                  errorCount: 1,
+                  studentsToCreate: 0,
+                  studentsReused: 0,
+                  enrollmentsToCreate: 0,
+                },
+                errors: [
+                  {
+                    line: 2,
+                    matricule: '26LYC101',
+                    field: 'birthDate',
+                    message: 'Date invalide',
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 422 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Trop de requêtes' },
+          }),
+          { status: 429, headers: { 'retry-after': '45' } },
+        ),
+      );
+
+    const preview = await importStudentsCsv({
+      csvContent: parsedCsv,
+      classId: CLASS_ID,
+      academicYearId: YEAR_ID,
+      dryRun: true,
+    });
+    expect(preview.committed).toBe(false);
+    expect(preview.preview[0]?.matricule).toBe('26LYC101');
+
+    const committed = await importStudentsCsv({
+      csvContent: parsedCsv,
+      classId: CLASS_ID,
+      academicYearId: YEAR_ID,
+      dryRun: false,
+    });
+    expect(committed.committed).toBe(true);
+    expect(committed.createdEnrollments).toHaveLength(1);
+
+    await expect(
+      importStudentsCsv({ csvContent: parsedCsv, dryRun: false }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: 'VALIDATION_ERROR',
+    });
+
+    await expect(
+      importStudentsCsv({ csvContent: parsedCsv, dryRun: true }),
+    ).rejects.toMatchObject({
+      status: 429,
+      retryAfterSeconds: 45,
     });
   });
 });

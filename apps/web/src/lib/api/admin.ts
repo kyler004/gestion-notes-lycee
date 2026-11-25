@@ -12,6 +12,7 @@ import {
   ENROLLMENT_STATUSES,
   type EnrollmentStatus,
   type GradingRulesSchema,
+  type ImportStudentsCsvSchema,
   PERIOD_STATUSES,
   PERIOD_TYPES,
   type ResetPasswordSchema,
@@ -34,6 +35,7 @@ import { isApiError } from './errors';
 import { SuccessResponseSchema } from './schemas';
 
 export const MAX_SCHOOL_LOGO_BYTES = 512 * 1024;
+export const MAX_CSV_IMPORT_BYTES = 512 * 1024;
 
 export const SchoolProfileDtoSchema = z.object({
   id: z.number().int(),
@@ -603,6 +605,105 @@ export async function updateEnrollment(
     method: 'PATCH',
     body: input,
     schema: EnrollmentDtoSchema,
+  });
+}
+
+export const CsvRowValidationErrorSchema = z.object({
+  line: z.number().int(),
+  matricule: z.string().nullable(),
+  field: z.string().nullable(),
+  message: z.string(),
+});
+export type CsvRowValidationErrorDto = z.infer<typeof CsvRowValidationErrorSchema>;
+
+export const CsvImportPreviewEntrySchema = z.object({
+  line: z.number().int(),
+  matricule: z.string(),
+  lastName: z.string(),
+  firstName: z.string(),
+  birthDate: z.string(),
+  sex: z.enum(STUDENT_SEXES),
+  classId: z.string().uuid().nullable(),
+  className: z.string().nullable(),
+  isRepeater: z.boolean(),
+  action: z.enum(['create_student', 'reuse_student']),
+});
+export type CsvImportPreviewEntryDto = z.infer<typeof CsvImportPreviewEntrySchema>;
+
+export const CsvImportSummarySchema = z.object({
+  totalRows: z.number().int(),
+  validRows: z.number().int(),
+  errorCount: z.number().int(),
+  studentsToCreate: z.number().int(),
+  studentsReused: z.number().int(),
+  enrollmentsToCreate: z.number().int(),
+});
+export type CsvImportSummaryDto = z.infer<typeof CsvImportSummarySchema>;
+
+export const ImportStudentsCsvResultSchema = z.object({
+  dryRun: z.boolean(),
+  committed: z.boolean(),
+  summary: CsvImportSummarySchema,
+  errors: z.array(CsvRowValidationErrorSchema),
+  preview: z.array(CsvImportPreviewEntrySchema),
+  createdStudents: z.array(StudentDtoSchema),
+  createdEnrollments: z.array(EnrollmentDtoSchema),
+});
+export type ImportStudentsCsvResult = z.infer<typeof ImportStudentsCsvResultSchema>;
+
+export const CsvImportErrorDetailsSchema = z.object({
+  summary: CsvImportSummarySchema,
+  errors: z.array(CsvRowValidationErrorSchema),
+});
+
+export async function readCsvFileContent(file: File): Promise<string> {
+  const lowerName = file.name.toLowerCase();
+  const allowedMime =
+    file.type === '' ||
+    file.type === 'text/csv' ||
+    file.type === 'text/plain' ||
+    file.type === 'application/csv' ||
+    file.type === 'application/vnd.ms-excel';
+
+  if (!allowedMime && !lowerName.endsWith('.csv') && !lowerName.endsWith('.txt')) {
+    throw new Error('Format non pris en charge. Sélectionnez un fichier .csv ou .txt.');
+  }
+  if (file.size === 0) {
+    throw new Error('Le fichier sélectionné est vide.');
+  }
+  if (file.size > MAX_CSV_IMPORT_BYTES) {
+    throw new Error('Le fichier dépasse la taille maximale autorisée de 512 Ko.');
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Impossible de lire le fichier CSV.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Échec de lecture du fichier CSV.'));
+    reader.readAsText(file, 'UTF-8');
+  });
+}
+
+export function generateStudentsCsvTemplate(defaultClassName = '3ème A'): string {
+  return [
+    'matricule;nom;prenom;date_naissance;lieu_naissance;sexe;redoublant;classe',
+    `26LYC101;MBARGA;Pauline;15/03/2011;Yaoundé;F;non;${defaultClassName}`,
+    `26LYC102;NKOLO;Serge;2010-11-04;Douala;M;oui;${defaultClassName}`,
+  ].join('\n');
+}
+
+export async function importStudentsCsv(
+  input: z.input<typeof ImportStudentsCsvSchema>,
+): Promise<ImportStudentsCsvResult> {
+  return apiRequest('/api/students/import-csv', {
+    method: 'POST',
+    body: input,
+    schema: ImportStudentsCsvResultSchema,
   });
 }
 

@@ -88,8 +88,13 @@ export function ChangePasswordDialog({
       return;
     }
 
-    if (newPassword.length < 8) {
+    if (newPassword.length < 10) {
       setError(t('auth.passwordMinLength'));
+      return;
+    }
+
+    if (user && newPassword.trim().toLowerCase() === user.username.trim().toLowerCase()) {
+      setError(t('auth.passwordSameAsUsername'));
       return;
     }
 
@@ -218,11 +223,12 @@ export function ChangePasswordDialog({
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="••••••••••"
               state={error ? 'error' : 'default'}
               disabled={!isOnline || submitting}
               required
             />
+            <FieldMessage tone="hint">{t('auth.passwordPolicyHint')}</FieldMessage>
           </div>
 
           <div className="space-y-1.5">

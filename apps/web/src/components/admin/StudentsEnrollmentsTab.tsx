@@ -10,6 +10,7 @@ import {
   RiEdit2Fill,
   RiGroupFill,
   RiSchoolFill,
+  RiUploadCloud2Fill,
   RiUserAddFill,
   RiUserFill,
 } from '@remixicon/react';
@@ -51,6 +52,7 @@ import {
 import { adminKeys } from '@/lib/api/query-keys';
 import { t } from '@/lib/i18n';
 import { getAdminErrorMessage, refreshLocalSyncSnapshot } from './admin-utils';
+import { ImportStudentsCsvDialog } from './ImportStudentsCsvDialog';
 
 type StatusFilter = 'all' | EnrollmentStatus;
 
@@ -78,6 +80,7 @@ export function StudentsEnrollmentsTab({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [registrySearch, setRegistrySearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [csvDialogOpen, setCsvDialogOpen] = useState(false);
 
   // Modale élève (création + inscription optionnelle ou édition)
   const [studentModalMode, setStudentModalMode] = useState<'create' | 'edit' | null>(null);
@@ -322,14 +325,25 @@ export function StudentsEnrollmentsTab({
             <CardTitle>{t('admin.students.rosterTitle')}</CardTitle>
             <CardDescription>{t('admin.students.rosterDesc')}</CardDescription>
           </div>
-          <Button
-            type="button"
-            icon={<RiUserAddFill />}
-            disabled={!isOnline}
-            onClick={openCreateStudent}
-          >
-            {t('admin.students.newStudentBtn')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<RiUploadCloud2Fill />}
+              disabled={!isOnline}
+              onClick={() => setCsvDialogOpen(true)}
+            >
+              {t('admin.students.importCsvBtn')}
+            </Button>
+            <Button
+              type="button"
+              icon={<RiUserAddFill />}
+              disabled={!isOnline}
+              onClick={openCreateStudent}
+            >
+              {t('admin.students.newStudentBtn')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -780,6 +794,16 @@ export function StudentsEnrollmentsTab({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportStudentsCsvDialog
+        open={csvDialogOpen}
+        onOpenChange={setCsvDialogOpen}
+        classes={classes}
+        selectedYearId={selectedYearId}
+        defaultClassId={selectedClassId}
+        isOnline={isOnline}
+        onImported={invalidateStudentQueries}
+      />
     </div>
   );
 }

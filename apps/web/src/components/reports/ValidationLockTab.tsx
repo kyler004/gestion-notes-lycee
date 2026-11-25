@@ -2,6 +2,7 @@ import { LockPeriodSchema, UnlockPeriodSchema } from '@lycee/shared';
 import {
   RiCheckboxCircleFill,
   RiErrorWarningFill,
+  RiHistoryFill,
   RiLockFill,
   RiLockUnlockFill,
   RiSchoolFill,
@@ -42,12 +43,14 @@ export function ValidationLockTab({
   periods,
   canUnlock,
   isOnline,
+  onViewAudit,
 }: {
   academicYearId: string;
   period: PeriodDto;
   periods: PeriodDto[];
   canUnlock: boolean;
   isOnline: boolean;
+  onViewAudit?: () => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -203,6 +206,17 @@ export function ValidationLockTab({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onViewAudit && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                icon={<RiHistoryFill />}
+                onClick={onViewAudit}
+              >
+                {t('reports.validation.viewAuditHistoryBtn')}
+              </Button>
+            )}
             {data.status === 'open' ? (
               <Button
                 type="button"

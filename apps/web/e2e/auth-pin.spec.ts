@@ -55,7 +55,13 @@ test.describe('Auth, PIN lock, offline reload & shared-PC switching', () => {
     await expect(page.getByTestId('network-badge')).toContainText('Hors ligne');
 
     // Retour en ligne + rechargement pour vérifier la reprise de session serveur
+    const refreshAfterReconnect = page.waitForResponse(
+      (res) => res.url().includes('/api/auth/refresh') && res.request().method() === 'POST',
+    );
     await context.setOffline(false);
+    const refreshRes = await refreshAfterReconnect;
+    expect(refreshRes.status()).toBe(200);
+    await page.waitForLoadState('networkidle');
     await page.reload();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId('network-badge')).toContainText('En ligne');
@@ -106,7 +112,7 @@ test.describe('Auth, PIN lock, offline reload & shared-PC switching', () => {
     await page.getByRole('button', { name: 'Modifier le mot de passe' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('Mot de passe actuel').fill(initialPassword);
-    await dialog.getByLabel('Nouveau mot de passe (min. 8 caractères)').fill(updatedPassword);
+    await dialog.getByLabel('Nouveau mot de passe (min. 10 caractères)').fill(updatedPassword);
     await dialog.getByLabel('Confirmer le nouveau mot de passe').fill(updatedPassword);
     await dialog.getByRole('button', { name: 'Mettre à jour le mot de passe' }).click();
 
