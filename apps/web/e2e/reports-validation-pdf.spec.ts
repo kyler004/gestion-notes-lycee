@@ -220,8 +220,8 @@ test.describe('Validation, Council Decisions & PDF Reports (Milestone 4)', () =>
       // Synthèse établissement contient notre classe créée
       await expect(page.getByText(fx.className)).toBeVisible();
 
-      // 2. Journal d'audit des notes
-      await page.getByRole('tab', { name: 'Audit des notes' }).click();
+      // 2. Journaux d'audit (Notes)
+      await page.getByRole('tab', { name: 'Journaux d’audit' }).click();
       await expect(page.getByText('Recomptage copie E2E').first()).toBeVisible();
       await expect(page.getByText('14,00 → 16,50').first()).toBeVisible();
 
@@ -275,6 +275,15 @@ test.describe('Validation, Council Decisions & PDF Reports (Milestone 4)', () =>
       const studentPdf = await studentPdfPromise;
       expect(studentPdf.suggestedFilename()).toMatch(/^bulletin-.*-S2\.pdf$/);
 
+      // 5b. Bilan annuel (T1–T3) -> résultats annuels + téléchargement bulletin annuel PDF
+      await page.getByRole('button', { name: /Période évaluée/ }).click();
+      await page.getByRole('menuitem', { name: /Bilan annuel \(T1–T3\)/ }).click();
+      await expect(page.getByText(/Calcul annuel provisoire/)).toBeVisible();
+      const annualClassPdfPromise = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Bulletins annuels (PDF)' }).click();
+      const annualClassPdf = await annualClassPdfPromise;
+      expect(annualClassPdf.suggestedFilename()).toMatch(/^bulletins-annuels-.*\.pdf$/);
+
       // 6. Déverrouillage exceptionnel -> motif < 5 car. bloqué -> motif valide déverrouille
       await page.getByRole('tab', { name: 'Validation & Verrouillage' }).click();
       await page.getByRole('button', { name: 'Déverrouillage exceptionnel' }).click();
@@ -287,6 +296,14 @@ test.describe('Validation, Council Decisions & PDF Reports (Milestone 4)', () =>
       await unlockDialog.getByRole('button', { name: 'Confirmer le déverrouillage' }).click();
       await expect(unlockDialog).toBeHidden();
       await expect(page.getByRole('button', { name: 'Verrouiller la période' })).toBeVisible();
+
+      // 7. Vérification des nouveaux journaux d'audit périodes & conseil
+      await page.getByRole('button', { name: 'Historique des verrouillages' }).click();
+      await expect(page.getByText('Clôture E2E S2').first()).toBeVisible();
+      await expect(page.getByText('Recours accepté E2E').first()).toBeVisible();
+
+      await page.getByRole('button', { name: 'Décisions du conseil' }).click();
+      await expect(page.getByText('Excellente progression E2E').first()).toBeVisible();
     } finally {
       await context.close();
     }

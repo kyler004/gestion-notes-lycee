@@ -166,7 +166,10 @@ export function CouncilDecisionsTab({
           queryKey: reportKeys.councilDecisions({ classId, periodId }),
         }),
         queryClient.invalidateQueries({ queryKey: reportKeys.classResults(classId, periodId) }),
+        queryClient.invalidateQueries({ queryKey: reportKeys.annualClassResults(classId) }),
         queryClient.invalidateQueries({ queryKey: reportKeys.honorRoll(classId, periodId) }),
+        queryClient.invalidateQueries({ queryKey: reportKeys.annualHonorRoll(classId) }),
+        queryClient.invalidateQueries({ queryKey: [...reportKeys.all, 'council-decision-audit'] }),
       ]);
       refreshLocalSyncSnapshot();
       toast.success(t('reports.council.savedSuccess', { count: res.count }));

@@ -92,6 +92,43 @@ function toRulesDraft(source: typeof CAMEROON_DEFAULT_GRADING_RULES): RulesDraft
   };
 }
 
+function suggestNextAppreciationBand(existing: AppreciationBand[]): AppreciationBand {
+  if (existing.length === 0) {
+    return { min: 0, max: 20, label: 'Passable' };
+  }
+  const sorted = [...existing].sort((a, b) => a.min - b.min || a.max - b.max);
+  const highestMax = sorted.reduce(
+    (maxVal, band) => (Number.isFinite(band.max) ? Math.max(maxVal, band.max) : maxVal),
+    0,
+  );
+  if (highestMax <= 19.98) {
+    return {
+      min: Number((highestMax + 0.01).toFixed(2)),
+      max: 20,
+      label: 'Nouvelle tranche',
+    };
+  }
+  if (sorted[0] && Number.isFinite(sorted[0].min) && sorted[0].min >= 0.02) {
+    return {
+      min: 0,
+      max: Number((sorted[0].min - 0.01).toFixed(2)),
+      label: 'Nouvelle tranche',
+    };
+  }
+  for (let i = 1; i < sorted.length; i += 1) {
+    const prev = sorted[i - 1]!;
+    const curr = sorted[i]!;
+    if (Number.isFinite(prev.max) && Number.isFinite(curr.min) && curr.min - prev.max > 0.02) {
+      return {
+        min: Number((prev.max + 0.01).toFixed(2)),
+        max: Number((curr.min - 0.01).toFixed(2)),
+        label: 'Nouvelle tranche',
+      };
+    }
+  }
+  return { min: 20, max: 20, label: 'Nouvelle tranche' };
+}
+
 export function AcademicStructureTab({
   years,
   selectedYearId,
@@ -323,6 +360,12 @@ export function AcademicStructureTab({
   };
 
   const lockedRulesReadOnly = !isOnline || hasLockedPeriod;
+
+  const liveRulesIssue = useMemo(() => {
+    const parsed = GradingRulesSchema.safeParse(rulesDraft);
+    if (parsed.success) return null;
+    return parsed.error.issues[0]?.message ?? 'Règles de notation invalides.';
+  }, [rulesDraft]);
 
   return (
     <div className="space-y-6">
@@ -742,22 +785,28 @@ export function AcademicStructureTab({
               {/* Grille d'appréciations */}
               <div className="space-y-3 rounded-lg border border-border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Label>{t('admin.academic.appreciationScaleLabel')}</Label>
+                  <div>
+                    <Label>{t('admin.academic.appreciationScaleLabel')}</Label>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t('admin.academic.appreciationScaleHint')}
+                    </p>
+                  </div>
                   <Button
                     type="button"
                     size="sm"
                     variant="secondary"
                     icon={<RiAddCircleFill />}
                     disabled={lockedRulesReadOnly}
-                    onClick={() =>
+                    onClick={() => {
+                      setRulesError(null);
                       setRulesDraft((prev) => ({
                         ...prev,
                         appreciationScale: [
                           ...prev.appreciationScale,
-                          { min: 0, max: 20, label: 'Appréciation' },
+                          suggestNextAppreciationBand(prev.appreciationScale),
                         ],
-                      }))
-                    }
+                      }));
+                    }}
                   >
                     {t('admin.academic.addBandBtn')}
                   </Button>
@@ -772,7 +821,7 @@ export function AcademicStructureTab({
                       <Input
                         size="sm"
                         type="number"
-                        step="0.5"
+                        step="0.01"
                         min={0}
                         max={20}
                         aria-label={`${t('admin.academic.bandMinLabel')} #${index + 1}`}
@@ -780,6 +829,7 @@ export function AcademicStructureTab({
                         disabled={lockedRulesReadOnly}
                         value={band.min}
                         onChange={(e) => {
+                          setRulesError(null);
                           const next = [...rulesDraft.appreciationScale];
                           next[index] = { ...band, min: Number(e.target.value) };
                           setRulesDraft((prev) => ({ ...prev, appreciationScale: next }));
@@ -788,7 +838,7 @@ export function AcademicStructureTab({
                       <Input
                         size="sm"
                         type="number"
-                        step="0.5"
+                        step="0.01"
                         min={0}
                         max={20}
                         aria-label={`${t('admin.academic.bandMaxLabel')} #${index + 1}`}
@@ -796,6 +846,7 @@ export function AcademicStructureTab({
                         disabled={lockedRulesReadOnly}
                         value={band.max}
                         onChange={(e) => {
+                          setRulesError(null);
                           const next = [...rulesDraft.appreciationScale];
                           next[index] = { ...band, max: Number(e.target.value) };
                           setRulesDraft((prev) => ({ ...prev, appreciationScale: next }));
@@ -807,6 +858,7 @@ export function AcademicStructureTab({
                         disabled={lockedRulesReadOnly}
                         value={band.label}
                         onChange={(e) => {
+                          setRulesError(null);
                           const next = [...rulesDraft.appreciationScale];
                           next[index] = { ...band, label: e.target.value };
                           setRulesDraft((prev) => ({ ...prev, appreciationScale: next }));
@@ -818,12 +870,13 @@ export function AcademicStructureTab({
                         variant="ghost"
                         disabled={lockedRulesReadOnly || rulesDraft.appreciationScale.length <= 1}
                         aria-label={`Supprimer tranche ${index + 1}`}
-                        onClick={() =>
+                        onClick={() => {
+                          setRulesError(null);
                           setRulesDraft((prev) => ({
                             ...prev,
                             appreciationScale: prev.appreciationScale.filter((_, i) => i !== index),
-                          }))
-                        }
+                          }));
+                        }}
                       >
                         <RiDeleteBin6Fill className="size-4 text-brick-400" />
                       </Button>
@@ -832,7 +885,9 @@ export function AcademicStructureTab({
                 </div>
               </div>
 
-              {rulesError && <FieldMessage tone="error">{rulesError}</FieldMessage>}
+              {(rulesError || liveRulesIssue) && (
+                <FieldMessage tone="error">{rulesError ?? liveRulesIssue}</FieldMessage>
+              )}
 
               <div className="flex justify-end">
                 <Button

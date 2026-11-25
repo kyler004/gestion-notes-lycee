@@ -5,6 +5,11 @@ import { useSyncStore } from '@/stores/sync.store';
 
 export function getAdminErrorMessage(err: unknown): string {
   if (isApiError(err)) {
+    if (err.status === 429) {
+      return t('admin.common.rateLimited', {
+        seconds: err.retryAfterSeconds ?? 60,
+      });
+    }
     return err.message;
   }
   if (isNetworkError(err)) {

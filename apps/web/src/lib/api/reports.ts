@@ -76,6 +76,8 @@ export const CouncilDecisionDtoSchema = z.object({
 });
 export type CouncilDecisionDto = z.infer<typeof CouncilDecisionDtoSchema>;
 
+export const REPORT_PERIOD_TYPES = [...PERIOD_TYPES, 'annual'] as const;
+
 export const SequenceGradeDetailSchema = z.object({
   periodId: z.string().uuid(),
   code: z.string(),
@@ -85,6 +87,26 @@ export const SequenceGradeDetailSchema = z.object({
   score: z.number().nullable(),
   status: z.enum(GRADE_STATUSES).nullable(),
 });
+
+export const TrimesterScoreDetailSchema = z.object({
+  periodId: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  orderIndex: z.number().int(),
+  weight: z.number(),
+  average: z.number().nullable(),
+});
+export type TrimesterScoreDetailDto = z.infer<typeof TrimesterScoreDetailSchema>;
+
+export const StudentTrimesterSummarySchema = z.object({
+  periodId: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  orderIndex: z.number().int(),
+  generalAverage: z.number().nullable(),
+  rank: z.number().int().nullable(),
+});
+export type StudentTrimesterSummaryDto = z.infer<typeof StudentTrimesterSummarySchema>;
 
 export const BulletinSubjectRowSchema = z.object({
   classSubjectId: z.string().uuid(),
@@ -96,6 +118,7 @@ export const BulletinSubjectRowSchema = z.object({
   coefficient: z.number(),
   teacherName: z.string().nullable(),
   sequenceScores: z.array(SequenceGradeDetailSchema),
+  trimesterScores: z.array(TrimesterScoreDetailSchema).optional(),
   average: z.number().nullable(),
   weightedScore: z.number().nullable(),
   rank: z.number().int().nullable(),
@@ -117,6 +140,7 @@ export const BulletinStudentDataSchema = z.object({
   sex: z.enum(STUDENT_SEXES),
   isRepeater: z.boolean(),
   subjects: z.array(BulletinSubjectRowSchema),
+  trimesterSummaries: z.array(StudentTrimesterSummarySchema).optional(),
   totalCoefficient: z.number(),
   totalPoints: z.number(),
   generalAverage: z.number().nullable(),
@@ -143,7 +167,7 @@ export const ClassResultsReportSchema = z.object({
     id: z.string().uuid(),
     code: z.string(),
     name: z.string(),
-    type: z.enum(PERIOD_TYPES),
+    type: z.enum(REPORT_PERIOD_TYPES),
     status: z.enum(PERIOD_STATUSES),
     isOfficial: z.boolean(),
     lockedAt: z.string().nullable(),
@@ -195,7 +219,7 @@ export const HonorRollReportSchema = z.object({
     id: z.string().uuid(),
     code: z.string(),
     name: z.string(),
-    type: z.enum(PERIOD_TYPES),
+    type: z.enum(REPORT_PERIOD_TYPES),
     status: z.enum(PERIOD_STATUSES),
     isOfficial: z.boolean(),
   }),
@@ -232,7 +256,7 @@ export const SchoolStatsReportSchema = z.object({
     id: z.string().uuid(),
     code: z.string(),
     name: z.string(),
-    type: z.enum(PERIOD_TYPES),
+    type: z.enum(REPORT_PERIOD_TYPES),
     status: z.enum(PERIOD_STATUSES),
     isOfficial: z.boolean(),
   }),
@@ -273,6 +297,51 @@ export const GradeAuditLogDtoSchema = z.object({
   operationId: z.string().nullable(),
 });
 export type GradeAuditLogDto = z.infer<typeof GradeAuditLogDtoSchema>;
+
+export const PeriodAuditLogDtoSchema = z.object({
+  id: z.string().uuid(),
+  academicYearId: z.string().uuid(),
+  academicYearLabel: z.string(),
+  periodId: z.string().uuid(),
+  periodCode: z.string(),
+  periodName: z.string(),
+  periodType: z.enum(PERIOD_TYPES),
+  action: z.enum(['locked', 'unlocked']),
+  actorId: z.string().uuid(),
+  actorName: z.string(),
+  actorUsername: z.string(),
+  reason: z.string(),
+  createdAt: z.string(),
+});
+export type PeriodAuditLogDto = z.infer<typeof PeriodAuditLogDtoSchema>;
+
+export const CouncilDecisionAuditLogDtoSchema = z.object({
+  id: z.string().uuid(),
+  councilDecisionId: z.string().uuid(),
+  academicYearId: z.string().uuid(),
+  classId: z.string().uuid(),
+  className: z.string(),
+  enrollmentId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  studentMatricule: z.string(),
+  studentLastName: z.string(),
+  studentFirstName: z.string(),
+  periodId: z.string().uuid(),
+  periodCode: z.string(),
+  periodName: z.string(),
+  periodType: z.enum(PERIOD_TYPES),
+  previousDecision: z.enum(COUNCIL_DECISIONS).nullable(),
+  newDecision: z.enum(COUNCIL_DECISIONS),
+  previousAppreciation: z.string().nullable(),
+  newAppreciation: z.string(),
+  previousAbsencesHours: z.number().int().nullable(),
+  newAbsencesHours: z.number().int(),
+  changedBy: z.string().uuid(),
+  changedByName: z.string(),
+  reason: z.string(),
+  serverTimestamp: z.string(),
+});
+export type CouncilDecisionAuditLogDto = z.infer<typeof CouncilDecisionAuditLogDtoSchema>;
 
 function buildQuery(params: Record<string, string | number | undefined>): string {
   const qs = new URLSearchParams();
@@ -347,6 +416,15 @@ export async function getSchoolStats(
   });
 }
 
+export async function getAnnualSchoolStats(
+  academicYearId: string,
+): Promise<SchoolStatsReportDto> {
+  const qs = buildQuery({ academicYearId });
+  return apiRequest(`/api/reports/annual/school-stats${qs}`, {
+    schema: SchoolStatsReportSchema,
+  });
+}
+
 export async function getClassResults(
   classId: string,
   periodId: string,
@@ -357,12 +435,26 @@ export async function getClassResults(
   });
 }
 
+export async function getAnnualClassResults(classId: string): Promise<ClassResultsReportDto> {
+  const qs = buildQuery({ classId });
+  return apiRequest(`/api/reports/annual/class-results${qs}`, {
+    schema: ClassResultsReportSchema,
+  });
+}
+
 export async function getHonorRoll(
   classId: string,
   periodId: string,
 ): Promise<HonorRollReportDto> {
   const qs = buildQuery({ classId, periodId });
   return apiRequest(`/api/reports/honor-roll${qs}`, {
+    schema: HonorRollReportSchema,
+  });
+}
+
+export async function getAnnualHonorRoll(classId: string): Promise<HonorRollReportDto> {
+  const qs = buildQuery({ classId });
+  return apiRequest(`/api/reports/annual/honor-roll${qs}`, {
     schema: HonorRollReportSchema,
   });
 }
@@ -383,6 +475,44 @@ export async function listGradeAuditLogs(filters: {
   });
   const res = await apiRequest(`/api/grades/audit${qs}`, {
     schema: z.object({ logs: z.array(GradeAuditLogDtoSchema) }),
+  });
+  return res.logs;
+}
+
+export async function listPeriodAuditLogs(filters: {
+  academicYearId?: string;
+  periodId?: string;
+  action?: 'locked' | 'unlocked';
+  limit?: number;
+}): Promise<PeriodAuditLogDto[]> {
+  const qs = buildQuery({
+    academicYearId: filters.academicYearId,
+    periodId: filters.periodId,
+    action: filters.action,
+    limit: filters.limit ?? 200,
+  });
+  const res = await apiRequest(`/api/periods/audit${qs}`, {
+    schema: z.object({ logs: z.array(PeriodAuditLogDtoSchema) }),
+  });
+  return res.logs;
+}
+
+export async function listCouncilDecisionAuditLogs(filters: {
+  academicYearId?: string;
+  classId?: string;
+  periodId?: string;
+  enrollmentId?: string;
+  limit?: number;
+}): Promise<CouncilDecisionAuditLogDto[]> {
+  const qs = buildQuery({
+    academicYearId: filters.academicYearId,
+    classId: filters.classId,
+    periodId: filters.periodId,
+    enrollmentId: filters.enrollmentId,
+    limit: filters.limit ?? 200,
+  });
+  const res = await apiRequest(`/api/council-decisions/audit${qs}`, {
+    schema: z.object({ logs: z.array(CouncilDecisionAuditLogDtoSchema) }),
   });
   return res.logs;
 }
@@ -411,6 +541,15 @@ export async function downloadStudentBulletinPdf(
   return { blob, filename: filename ?? `bulletin-${enrollmentId}.pdf` };
 }
 
+export async function downloadAnnualStudentBulletinPdf(
+  enrollmentId: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const { blob, filename } = await apiFetchFile(
+    `/api/reports/annual/bulletins/student/${enrollmentId}/pdf`,
+  );
+  return { blob, filename: filename ?? `bulletin-annuel-${enrollmentId}.pdf` };
+}
+
 export async function downloadClassBulletinsPdf(
   classId: string,
   periodId: string,
@@ -421,6 +560,15 @@ export async function downloadClassBulletinsPdf(
   return { blob, filename: filename ?? `bulletins-classe-${classId}.pdf` };
 }
 
+export async function downloadAnnualClassBulletinsPdf(
+  classId: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const { blob, filename } = await apiFetchFile(
+    `/api/reports/annual/bulletins/class/${classId}/pdf`,
+  );
+  return { blob, filename: filename ?? `bulletins-annuels-${classId}.pdf` };
+}
+
 export async function downloadHonorRollPdf(
   classId: string,
   periodId: string,
@@ -429,6 +577,15 @@ export async function downloadHonorRollPdf(
     `/api/reports/honor-roll/${classId}/pdf${buildQuery({ periodId })}`,
   );
   return { blob, filename: filename ?? `tableau-honneur-${classId}.pdf` };
+}
+
+export async function downloadAnnualHonorRollPdf(
+  classId: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const { blob, filename } = await apiFetchFile(
+    `/api/reports/annual/honor-roll/${classId}/pdf`,
+  );
+  return { blob, filename: filename ?? `tableau-honneur-annuel-${classId}.pdf` };
 }
 
 export async function downloadClassListPdf(

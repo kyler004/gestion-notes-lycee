@@ -69,7 +69,7 @@ test.describe('School & Academic Administration (Milestone 3)', () => {
       const userDialog = page.getByRole('dialog');
       await userDialog.getByLabel('Identifiant de connexion').fill(teacherUsername);
       await userDialog.getByLabel('Nom complet').fill(teacherName);
-      await userDialog.getByLabel('Mot de passe initial (min. 8 caractères)').fill(teacherPassword);
+      await userDialog.getByLabel('Mot de passe initial (min. 10 caractères)').fill(teacherPassword);
       await userDialog.getByRole('button', { name: 'Enregistrer' }).click();
       await expect(userDialog).toBeHidden();
       await expect(page.getByText(`@${teacherUsername}`)).toBeVisible();
@@ -124,7 +124,7 @@ test.describe('School & Academic Administration (Milestone 3)', () => {
       await expect(assignDialog).toBeHidden();
       await expect(page.getByText(teacherName).first()).toBeVisible();
 
-      // 6. Création élève avec inscription en une étape dans Élèves & Inscriptions
+      // 6. Création élève + import CSV dans Élèves & Inscriptions
       await page.getByRole('tab', { name: 'Élèves & Inscriptions' }).click();
       await expect(page.getByText('Effectif par classe')).toBeVisible();
       const classDropdown = page.getByRole('button', { name: /^Classe\s/ });
@@ -141,6 +141,18 @@ test.describe('School & Academic Administration (Milestone 3)', () => {
       await studentDialog.getByRole('button', { name: 'Enregistrer' }).click();
       await expect(studentDialog).toBeHidden();
       await expect(page.getByText('NDONGO Claire').first()).toBeVisible();
+
+      const csvMatricule = `CSV-${tag}`.slice(0, 20);
+      await page.getByRole('button', { name: 'Importer CSV' }).click();
+      const csvDialog = page.getByRole('dialog');
+      await csvDialog
+        .getByLabel('Contenu CSV')
+        .fill(`matricule;nom;prenom;date_naissance;lieu_naissance;sexe;redoublant\n${csvMatricule};TCHOUA;Marc;12/04/2009;Douala;M;non`);
+      await csvDialog.getByRole('button', { name: 'Analyser le fichier (aperçu)' }).click();
+      await expect(csvDialog.getByText('TCHOUA Marc')).toBeVisible();
+      await csvDialog.getByRole('button', { name: 'Confirmer l’import (1)' }).click();
+      await expect(csvDialog).toBeHidden();
+      await expect(page.getByText('TCHOUA Marc').first()).toBeVisible();
 
       // 7. Déconnexion puis connexion avec le nouvel enseignant -> vérification sur /grades
       await page.getByRole('button', { name: 'Déconnexion' }).click();
@@ -159,6 +171,7 @@ test.describe('School & Academic Administration (Milestone 3)', () => {
       await expect(page).toHaveURL(/\/grades$/);
 
       await expect(page.getByText('NDONGO Claire')).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText('TCHOUA Marc')).toBeVisible({ timeout: 10_000 });
       await expect(page.getByRole('button', { name: new RegExp(className) })).toBeVisible();
       await expect(page.getByRole('button', { name: new RegExp(subjectName) })).toBeVisible();
     } finally {

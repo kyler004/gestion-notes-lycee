@@ -282,7 +282,7 @@ describe('Auth UI & role-based route guards', () => {
       status: 'authenticated',
       user: {
         id: TEACHER_ID,
-        username: 'j.dupont',
+        username: 'prof.dupont',
         fullName: 'Jean Dupont',
         role: 'teacher',
         isActive: true,
@@ -300,9 +300,33 @@ describe('Auth UI & role-based route guards', () => {
     const newInput = screen.getByLabelText(t('auth.newPasswordLabel'));
     const confirmInput = screen.getByLabelText(t('auth.confirmNewPasswordLabel'));
 
-    // Validation locale : correspondance
+    // Validation locale : mot de passe < 10 caractères, identique à l'identifiant, ou sans chiffre
     await user.type(currentInput, 'WrongPass1!');
+    await user.type(newInput, 'Short1a!');
+    await user.type(confirmInput, 'Short1a!');
+    await user.click(screen.getByRole('button', { name: t('auth.changePasswordSubmit') }));
+    expect(await screen.findByText(t('auth.passwordMinLength'))).toBeInTheDocument();
+
+    await user.clear(newInput);
+    await user.type(newInput, 'PROF.DUPONT');
+    await user.clear(confirmInput);
+    await user.type(confirmInput, 'PROF.DUPONT');
+    await user.click(screen.getByRole('button', { name: t('auth.changePasswordSubmit') }));
+    expect(await screen.findByText(t('auth.passwordSameAsUsername'))).toBeInTheDocument();
+
+    await user.clear(newInput);
+    await user.type(newInput, 'PasswordWithoutDigit');
+    await user.clear(confirmInput);
+    await user.type(confirmInput, 'PasswordWithoutDigit');
+    await user.click(screen.getByRole('button', { name: t('auth.changePasswordSubmit') }));
+    expect(
+      await screen.findByText(/Le mot de passe doit contenir au moins une lettre et un chiffre/i),
+    ).toBeInTheDocument();
+
+    // Validation locale : correspondance
+    await user.clear(newInput);
     await user.type(newInput, 'NewPass2026!');
+    await user.clear(confirmInput);
     await user.type(confirmInput, 'Mismatch2026!');
     await user.click(screen.getByRole('button', { name: t('auth.changePasswordSubmit') }));
     expect(await screen.findByText(t('auth.passwordMismatch'))).toBeInTheDocument();

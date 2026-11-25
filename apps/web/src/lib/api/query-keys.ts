@@ -29,18 +29,35 @@ export const reportKeys = {
   all: ['reports'] as const,
   schoolStats: (academicYearId: string, periodId: string) =>
     [...reportKeys.all, 'school-stats', academicYearId, periodId] as const,
+  annualSchoolStats: (academicYearId: string) =>
+    [...reportKeys.all, 'annual-school-stats', academicYearId] as const,
   completeness: (periodId: string) => [...reportKeys.all, 'completeness', periodId] as const,
   councilDecisions: (filters: { classId?: string; periodId?: string }) =>
     [...reportKeys.all, 'council-decisions', filters] as const,
   classResults: (classId: string, periodId: string) =>
     [...reportKeys.all, 'class-results', classId, periodId] as const,
+  annualClassResults: (classId: string) =>
+    [...reportKeys.all, 'annual-class-results', classId] as const,
   honorRoll: (classId: string, periodId: string) =>
     [...reportKeys.all, 'honor-roll', classId, periodId] as const,
+  annualHonorRoll: (classId: string) =>
+    [...reportKeys.all, 'annual-honor-roll', classId] as const,
   gradeAudit: (filters: {
     classId?: string;
     periodId?: string;
     enrollmentId?: string;
     classSubjectId?: string;
   }) => [...reportKeys.all, 'grade-audit', filters] as const,
+  periodAudit: (filters: {
+    academicYearId?: string;
+    periodId?: string;
+    action?: 'locked' | 'unlocked';
+  }) => [...reportKeys.all, 'period-audit', filters] as const,
+  councilDecisionAudit: (filters: {
+    academicYearId?: string;
+    classId?: string;
+    periodId?: string;
+    enrollmentId?: string;
+  }) => [...reportKeys.all, 'council-decision-audit', filters] as const,
 };
 

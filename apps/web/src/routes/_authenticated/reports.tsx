@@ -8,11 +8,11 @@ import {
 } from '@remixicon/react';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ClassResultsReportsTab } from '@/components/reports/ClassResultsReportsTab';
 import { CouncilDecisionsTab } from '@/components/reports/CouncilDecisionsTab';
-import { GradeAuditTab } from '@/components/reports/GradeAuditTab';
-import { ReportContextBar } from '@/components/reports/ReportContextBar';
+import { type AuditSubview, GradeAuditTab } from '@/components/reports/GradeAuditTab';
+import { ANNUAL_PERIOD_VALUE, ReportContextBar } from '@/components/reports/ReportContextBar';
 import { SchoolStatsTab } from '@/components/reports/SchoolStatsTab';
 import { ValidationLockTab } from '@/components/reports/ValidationLockTab';
 import { Badge } from '@/components/ui/badge';
@@ -61,6 +61,7 @@ function ReportsPage() {
   const [selectedYearId, setSelectedYearId] = useState<string | undefined>();
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | undefined>();
   const [selectedClassId, setSelectedClassId] = useState<string | undefined>();
+  const [auditInitialSubview, setAuditInitialSubview] = useState<AuditSubview>('grades');
 
   const isSecretary = user?.role === 'secretary';
   const canUnlock = user?.role === 'admin' || user?.role === 'principal';
@@ -92,7 +93,12 @@ function ReportsPage() {
     return visibleTabs[0]!.value;
   }, [search.tab, visibleTabs]);
 
-  const handleTabChange = (nextTab: ReportTabKey) => {
+  const handleTabChange = (nextTab: ReportTabKey, options?: { auditSubview?: AuditSubview }) => {
+    if (options?.auditSubview) {
+      setAuditInitialSubview(options.auditSubview);
+    } else if (nextTab === 'audit') {
+      setAuditInitialSubview('grades');
+    }
     void navigate({
       search: () => ({ tab: nextTab }),
       replace: true,
@@ -138,16 +144,33 @@ function ReportsPage() {
   }, [periodsQuery.data]);
 
   const classes = classesQuery.data ?? [];
+  const allowAnnualForActiveTab = activeTab === 'stats' || activeTab === 'results';
+  const lastStandardPeriodRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (periods.length === 0) {
+      lastStandardPeriodRef.current = undefined;
       setSelectedPeriodId(undefined);
       return;
     }
-    if (!selectedPeriodId || !periods.some((p) => p.id === selectedPeriodId)) {
-      setSelectedPeriodId(periods[0]!.id);
+    if (selectedPeriodId === ANNUAL_PERIOD_VALUE) {
+      if (!allowAnnualForActiveTab) {
+        const fallback =
+          lastStandardPeriodRef.current &&
+          periods.some((p) => p.id === lastStandardPeriodRef.current)
+            ? lastStandardPeriodRef.current
+            : periods[0]!.id;
+        setSelectedPeriodId(fallback);
+      }
+      return;
     }
-  }, [periods, selectedPeriodId]);
+    if (!selectedPeriodId || !periods.some((p) => p.id === selectedPeriodId)) {
+      lastStandardPeriodRef.current = periods[0]!.id;
+      setSelectedPeriodId(periods[0]!.id);
+      return;
+    }
+    lastStandardPeriodRef.current = selectedPeriodId;
+  }, [periods, selectedPeriodId, allowAnnualForActiveTab]);
 
   useEffect(() => {
     if (classes.length === 0) {
@@ -161,7 +184,11 @@ function ReportsPage() {
 
   if (!user) return null;
 
-  const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
+  const isAnnualSelected =
+    allowAnnualForActiveTab && selectedPeriodId === ANNUAL_PERIOD_VALUE;
+  const selectedPeriod = isAnnualSelected
+    ? undefined
+    : periods.find((p) => p.id === selectedPeriodId);
   const parentPeriod = selectedPeriod?.parentPeriodId
     ? periods.find((p) => p.id === selectedPeriod.parentPeriodId)
     : undefined;
@@ -220,6 +247,7 @@ function ReportsPage() {
           selectedClassId={selectedClassId}
           onSelectClass={setSelectedClassId}
           showClass={showClassInContextBar}
+          allowAnnual={allowAnnualForActiveTab}
         />
       )}
 
@@ -234,15 +262,21 @@ function ReportsPage() {
             <span>{t('admin.common.loading')}</span>
           </Card>
         ) : activeTab === 'audit' ? (
-          <GradeAuditTab classes={classes} periods={periods} />
-        ) : !selectedYearId || !selectedPeriod ? (
+          <GradeAuditTab
+            years={years}
+            classes={classes}
+            periods={periods}
+            initialSubview={auditInitialSubview}
+          />
+        ) : !selectedYearId || (!selectedPeriod && !isAnnualSelected) ? (
           <Card variant="outline" className="p-8 text-center text-sm text-muted-foreground">
             {t('admin.yearContextNone')}
           </Card>
         ) : activeTab === 'stats' ? (
           <SchoolStatsTab
             academicYearId={selectedYearId}
-            periodId={selectedPeriod.id}
+            periodId={selectedPeriod?.id ?? ''}
+            isAnnual={isAnnualSelected}
             onInspectClass={(classId) => {
               setSelectedClassId(classId);
               handleTabChange('results');
@@ -251,10 +285,11 @@ function ReportsPage() {
         ) : activeTab === 'validation' ? (
           <ValidationLockTab
             academicYearId={selectedYearId}
-            period={selectedPeriod}
+            period={selectedPeriod!}
             periods={periods}
             canUnlock={canUnlock}
             isOnline={isOnline}
+            onViewAudit={() => handleTabChange('audit', { auditSubview: 'periods' })}
           />
         ) : !selectedClassId ? (
           <Card variant="outline" className="p-8 text-center text-sm text-muted-foreground">
@@ -264,14 +299,15 @@ function ReportsPage() {
           <CouncilDecisionsTab
             academicYearId={selectedYearId}
             classId={selectedClassId}
-            periodId={selectedPeriod.id}
+            periodId={selectedPeriod!.id}
             isLocked={isSelectedPeriodLocked}
             isOnline={isOnline}
           />
         ) : (
           <ClassResultsReportsTab
             classId={selectedClassId}
-            periodId={selectedPeriod.id}
+            periodId={selectedPeriod?.id ?? ''}
+            isAnnual={isAnnualSelected}
             isOnline={isOnline}
           />
         )}

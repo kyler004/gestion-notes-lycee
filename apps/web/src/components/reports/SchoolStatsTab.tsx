@@ -18,23 +18,28 @@ import {
 } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { reportKeys } from '@/lib/api/query-keys';
-import { getSchoolStats } from '@/lib/api/reports';
+import { getAnnualSchoolStats, getSchoolStats } from '@/lib/api/reports';
 import { t } from '@/lib/i18n';
 import { formatDecimalFr, formatReportError } from './ReportContextBar';
 
 export function SchoolStatsTab({
   academicYearId,
   periodId,
+  isAnnual = false,
   onInspectClass,
 }: {
   academicYearId: string;
   periodId: string;
+  isAnnual?: boolean;
   onInspectClass: (classId: string) => void;
 }) {
   const statsQuery = useQuery({
-    queryKey: reportKeys.schoolStats(academicYearId, periodId),
-    queryFn: () => getSchoolStats(academicYearId, periodId),
-    enabled: Boolean(academicYearId && periodId),
+    queryKey: isAnnual
+      ? reportKeys.annualSchoolStats(academicYearId)
+      : reportKeys.schoolStats(academicYearId, periodId),
+    queryFn: () =>
+      isAnnual ? getAnnualSchoolStats(academicYearId) : getSchoolStats(academicYearId, periodId),
+    enabled: Boolean(academicYearId && (isAnnual || periodId)),
   });
 
   if (statsQuery.isLoading) {
@@ -97,12 +102,18 @@ export function SchoolStatsTab({
         <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>{t('reports.stats.classTableTitle')}</CardTitle>
-            <CardDescription>{t('reports.stats.classTableDesc')}</CardDescription>
+            <CardDescription>
+              {isAnnual ? t('reports.stats.classTableAnnualDesc') : t('reports.stats.classTableDesc')}
+            </CardDescription>
           </div>
           <Badge variant={stats.period.isOfficial ? 'success' : 'warning'}>
             {stats.period.isOfficial
-              ? t('reports.statusOfficialBadge')
-              : t('reports.statusProvisionalBadge')}
+              ? isAnnual
+                ? t('reports.context.annualOfficialBadge')
+                : t('reports.statusOfficialBadge')
+              : isAnnual
+                ? t('reports.context.annualProvisionalBadge')
+                : t('reports.statusProvisionalBadge')}
           </Badge>
         </CardHeader>
         <CardContent>
